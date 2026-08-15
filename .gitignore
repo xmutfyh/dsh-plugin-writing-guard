@@ -1,0 +1,18 @@
+# Dependencies — never commit
+node_modules/
+
+# Build artifacts of deps (pnpm virtual store lives in node_modules)
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# NOTE: lib/ IS committed on purpose — DSH plugins install from GitHub
+# tarballs without a build step (same convention as dsh-proof /
+# dsh-custom-tool). Keep compiled output in sync with src/ on every release.

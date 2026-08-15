@@ -1,0 +1,5 @@
+# dsh-plugin-writing-guard bundle declaration: insert into the host
+# composite's dsh-plugin-writing-guard plugin line.
+- insert:
+    - id: dsh-plugin-writing-guard
+      name: dsh-plugin-writing-guard

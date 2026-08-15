@@ -1,0 +1,46 @@
+{
+  "name": "dsh-plugin-writing-guard",
+  "version": "0.2.0",
+  "description": "DSH plugin: AI-writing-discipline guard — scan manuscripts for revision residue, defensive writing, and AI-style patterns (dash abuse, not-X-but-Y, LLM overused words, rule-of-three); writing_audit + writing_rules tools with auto-audit on paper file writes",
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "host-plugin",
+    "academic-writing",
+    "paper",
+    "manuscript",
+    "writing-style",
+    "ai-detection",
+    "defensive-writing",
+    "proofreading",
+    "reviewer"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
