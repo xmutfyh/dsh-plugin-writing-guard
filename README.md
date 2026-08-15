@@ -1,6 +1,7 @@
 # DSH Writing Guard
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
 > DeepSeek Harness (DSH) 论文写作守卫：在论文撰写和修改过程中自动检查常见 AI 写作风格、
 > 修改残留、防御性表达与机械化句式。
@@ -64,8 +65,8 @@ dsh plugin --profile web add github:xmutfyh/dsh-plugin-writing-guard
 # 或直接从 GitHub tarball 安装
 dsh plugin --profile web add https://github.com/xmutfyh/dsh-plugin-writing-guard/archive/refs/heads/master.tar.gz
 
-# 或从本地源码目录安装
-dsh plugin --profile web add C:/Users/fyh/Downloads/dsh-plugins-src/dsh-plugin-writing-guard
+# 或从本地源码目录安装（发布 npm 后可直接按包名安装）
+dsh plugin --profile web add ./path/to/dsh-plugin-writing-guard
 
 # 重启生效
 dsh web
@@ -129,8 +130,41 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 
 | 工具 | 用途 |
 |---|---|
-| `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose；返回按严重度+置信度排序的问题清单与全文统计 |
+| `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose、projectResidueTerms（临时追加项目内部词表，仅本次调用生效）；返回按严重度+置信度排序的问题清单与全文统计 |
 | `writing_rules` | 返回写作纪律速查（含 profile 与密度说明） |
+
+### 真实输出演示
+
+对一段含修改残留的文本运行 `writing_audit`（verbose=true，真实输出）：
+
+```text
+写作纪律检查报告（文档类型: manuscript）：发现 3 处问题（高 3 / 中 0 / 低 0）
+- 统计：1 段 / 115 字符（英文 19 词 + 中文 0 字）；破折号 0；rather than 0；不是X而是Y 0；绝对化定义 0；三连排比 0；LLM过渡词 0；中文套话 0；冒号标题 0
+- 分类：修改过程残留 3
+
+🔴 [HIGH · conf high] 正文出现 "revised/revision" 修改过程残留 [para 0]
+    原文：The revised model uses the ΔP regression objective only. As requested by the reviewer, we h…
+    提示：正文中出现了 "revised/revision" 等修改过程语言，这是写给审稿人的元话语；正式论文读者只应看到最终版本。（专有名词如 Revised Cardiac Risk Index、revised simplex method，以及文献引用语境 “Smith proposed a revised model” 除外）
+    建议：改为中性论文语言：the proposed model / the model / the present analysis，把“修改”动作从正文清除。
+    依据：style-guide — 写作纪律页：修改过程残留黑名单
+
+🔴 [HIGH · conf high] 审稿回应用语残留 [para 0]
+    原文：The revised model uses the ΔP regression objective only. As requested by the reviewer, we have updated the methods.
+    建议：直接陈述做法或结果本身，不引用审稿过程。
+
+🔴 [HIGH · conf high] "we have updated/modified" 修改叙述 [para 0]
+    原文：…ΔP regression objective only. As requested by the reviewer, we have updated the methods.
+    建议：把句子改写为对最终版本的直接陈述，例如直接描述模型/方法/结果，删除变更动词。
+
+（提示：加 verbose=true 可查看每条的建议与备注；默认只输出原文摘要）
+```
+
+真实调用：
+
+```text
+writing_audit(filePath: "manuscript/main.md", profile: "manuscript", verbose: true)
+→ 写作纪律检查报告：发现 0 处问题 ✅ 通过
+```
 
 ## 自动审计（默认开启，v0.5 增量模式）
 
@@ -139,7 +173,7 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
 自动审计（自动检测文档 profile），结果经 `additionalContexts` 注入模型下一条请求。
 
 **v0.5 incremental lint**：审计状态按文件持久化（`~/.dsh/plugins/dsh-plugin-writing-guard/state.json`），
-每次写入只注入**增量**：
+每次写入只注入**增量**（v0.5.2：指纹基于命中词本身，同段其他文字编辑不会造成假"解决+新增"重复注入）：
 
 ```text
 新增 1 项 / 已解决 4 项 / 仍存在 8 项
@@ -193,8 +227,10 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 63 项 TP/TN/边界用例（无测试框架依赖）
+npm test   # 自动先 build 再跑 104 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性回归）
 ```
+
+CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。
 
 ## 开发
 

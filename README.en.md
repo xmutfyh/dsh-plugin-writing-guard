@@ -1,141 +1,236 @@
-# dsh-plugin-writing-guard
+# DSH Writing Guard
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
-**A deterministic academic-writing linter for DeepSeek Harness (DSH).**
+> DeepSeek Harness (DSH) academic-writing guard: automatically checks papers for common AI writing
+> style, revision-process residue, defensive writing, and mechanical sentence patterns — while you write.
 
-Keeps your academic writing clean: it scans manuscripts for **revision-process
-residue**, **claim-calibration issues**, **rhetorical patterns**, **LLM-associated
-vocabulary**, and **formatting tells** — with **document-type awareness** and
-**density-based thresholds**. Auto-audits every paper file you write. Zero network,
-zero LLM cost (pure local regex/statistics).
+**Works with: Chinese papers, English papers, SCI manuscripts, theses, academic writing and polishing.**
 
-> Not an "AI detector" — a linter that knows what document it is checking and can
-> explain why it flags something.
+The plugin is not a one-shot "humanizer" that rewrites your whole paper after it is done.
+Instead it works continuously:
+
+**rules before writing → guard while writing → audit after edits.**
+
+It provides two native DSH tools:
+
+- `writing_rules` — load the writing-discipline cheat sheet before writing
+- `writing_audit` — scan text for AI-style patterns, revision residue, defensive writing, LLM-overused expressions and structural tells
+
+and optionally auto-audits paper files (`.md` / `.tex` / `.txt`) after every `write` / `edit`
+(v0.5 incremental mode), feeding only *new* high-risk issues back to the agent.
+
+> Positioning: not an "AI detector", but a writing linter that knows what kind of document it is
+> looking at and can explain *why* it flags something.
+> All rules are local regex/statistics — zero network, zero LLM calls, millisecond latency.
+
+## Why Writing Guard instead of a Humanizer?
+
+| | Writing Guard | Humanizer | AI Detector |
+|---|---|---|---|
+| Rules before writing | ✅ | ❌ | ❌ |
+| Checks while writing | ✅ | usually ❌ | ❌ |
+| Auto-audits paper edits | ✅ | ❌ | ❌ |
+| Full-text rewrite | ❌ | ✅ | ❌ |
+| Explainable issue location | ✅ | partial | partial |
+| Revision residue detection | ✅ | not necessarily | ❌ |
+| Defensive writing detection | ✅ | not necessarily | ❌ |
+| Local rules (zero network / zero LLM) | ✅ | usually needs LLM | varies |
+
+> Writing Guard is complementary to Humanizers, not a replacement.
+> Humanizer workflow: AI draft → rewrite → humanized version.
+> Writing Guard workflow: rules → writing → automatic audit → targeted revision.
+>
+> **A humanizer fixes the text after it's written; Writing Guard guards it as you write.**
+
+## About "removing AI flavor"
+
+In this project, "removing AI flavor" means identifying and reducing mechanical, templated,
+over-structured LLM writing style — the goal is better academic expression, not guaranteed
+evasion of any AI-detection system.
 
 ## Install
 
 ```sh
-# from GitHub (lib/ is committed — no build step needed)
+# From GitHub (lib/ is committed — no build needed)
 dsh plugin --profile web add github:xmutfyh/dsh-plugin-writing-guard
 
-# or from the GitHub tarball directly
+# Or from the GitHub tarball
 dsh plugin --profile web add https://github.com/xmutfyh/dsh-plugin-writing-guard/archive/refs/heads/master.tar.gz
 
-# restart to load
+# Or from a local source directory (after publishing to npm, install by package name)
+dsh plugin --profile web add ./path/to/dsh-plugin-writing-guard
+
+# Restart to apply
 dsh web
 ```
 
-Repo: <https://github.com/xmutfyh/dsh-plugin-writing-guard>
+Repository: https://github.com/xmutfyh/dsh-plugin-writing-guard
 
-## Document profiles (v0.3)
+## Document-profile awareness (v0.3)
 
-The same phrase means different things in different documents. Rules are scoped
-by document type:
+The same sentence means different things in different documents. Rules are scoped per document type:
 
-| profile | meaning | e.g. "as requested by the reviewer" |
+| profile | meaning | e.g. `as requested by the reviewer` |
 |---|---|---|
-| `manuscript` | paper body | 🔴 revision residue — flagged |
-| `rebuttal` | response letter | ✅ normal — not flagged |
-| `cover_letter` | submission letter | 🔴 residue — flagged |
-| `review` / `notes` / `unknown` | other | conservative |
+| `manuscript` | paper body | 🔴 revision residue, flagged |
+| `rebuttal` | point-by-point response | ✅ normal, not flagged |
+| `cover_letter` | submission letter | 🔴 residue, flagged |
+| `review` / `notes` / `unknown` | other | conservative handling |
 
-Pass `profile` to `writing_audit`, or it is auto-detected from the file path.
+`writing_audit` accepts a `profile` argument, or auto-detects it from the file path
+(rebuttal/cover_letter/manuscript keywords; `reviewer2_comments`, `my_notes`,
+`revision_notes` are recognized too).
 
-## What it catches
+## What it detects
 
-| Category | Typical issues |
+Based on reviewer-shared AI-writing tell lists (dash overuse, "it's not X but Y", absolutist
+definitions, colon-title abuse), the "play to strengths / don't bait reviewers" principle, and
+published research (Kobak et al., *Science Advances* 2025, >15M biomedical abstracts;
+community word lists delve/tapestry/testament/leverage):
+
+| category | typical issue |
 |---|---|
-| Process residue | "revised model", "as requested", "we have updated", CN "本轮/投稿前" |
-| Claim calibration | "we do not claim", CN "本文并非要证明", self-deprecation; legitimate limitations statements are NOT flagged (ICMJE requires them) |
-| Rhetorical patterns | "not X but Y", "rather than" abuse, absolutist definitions, rule of three |
-| LLM-associated words | delve / tapestry / testament / leverage / harness… (density rule — a single occurrence is fine) |
-| Academic style | "we believe/think", hedges, abstract adverbs; "significantly" only prompts review of non-statistical uses |
-| Formatting | em-dash density (range en-dashes excluded), colon-title abuse |
+| revision residue | "revised model", "as requested", "we have updated", Chinese 本轮/投稿前/审稿人要求 |
+| claim calibration | "we do not claim", Chinese 本文并非要证明, self-deprecation; legitimate limitations are NOT flagged (ICMJE) |
+| rhetorical patterns | "不是X而是Y"/"not X but Y", "rather than" overuse, absolutist definitions, rule of three |
+| LLM-associated words | delve/tapestry/testament/leverage/harness etc. (density rule — a single occurrence is fine) |
+| academic style | we believe/think, vague quantifiers, abstract adverbs; "significantly" only prompts review of statistical context |
+| formatting | em-dash density (range en-dashes excluded), colon titles |
 
 ## Density thresholds (v0.3.3)
 
-Frequency rules use **per-1,000 language units**: English rules use the English
-word count, Chinese rules use CJK char count (bilingual files do not dilute each
-other), with a **double gate**: `count >= minCount AND count/denominator*1000 >= perK`.
-E.g. rather than: ≥4 and ≥1.0/1k; em-dash: ≥5 and ≥0.5/1k; LLM words: ≥2 and
-≥0.4/1k; Chinese connectives: ≥8 and ≥2.0/1k chars. A 500-word abstract and a
-12,000-word full paper no longer share one absolute threshold.
+Frequency rules use **per-1000-language-unit** density: English rules are normalized by English
+word count, Chinese rules by CJK character count (bilingual files don't dilute each other),
+with a **double gate**: `count >= minCount AND count/denominator*1000 >= perK` before flagging.
+Examples: "rather than" ≥4 and ≥1.0/1k words; em-dash ≥5 and ≥0.5/1k; LLM words ≥2 and ≥0.4/1k;
+Chinese connectives ≥8 and ≥2.0/1k chars. A 500-word abstract and a 12k-word manuscript no longer
+share the same threshold.
 
 ## Preprocessing (v0.4 segment pipeline, on by default)
 
-Documents are split into **typed segments** (prose/heading/reference/code/math/
-table); each rule declares the segment kinds it scans:
-- LLM vocabulary, revision residue, etc. → `prose`
-- colon-title → `heading` (colons inside prose paragraphs are not counted)
-- references/code/math/table → ignored by default
+Documents are split into typed segments (prose/heading/reference/code/math/table), and each rule
+declares which segment types it scans:
 
-**Section detection** (Introduction/Methods/Results/Discussion/Conclusion…):
-`limitation-dispersal` was upgraded from word frequency to **cross-section
-dispersion** — flagged only when the same limitation appears in ≥3 sections;
-an ICMJE-appropriate limitations statement confined to Discussion is not flagged.
+- LLM vocabulary, revision residue → `prose`
+- colon titles → `heading` only (colons inside body prose don't count)
+- references/code/math/table → ignored by default (v0.5.2: an Appendix after References is still scanned)
 
-## Confidence & evidence (v0.3)
+**Section detection** (Introduction/Methods/Results/Discussion/Conclusion…) powers
+`limitations-across-sections`: repeated limitation statements scattered across ≥3 top-level
+sections are flagged, while stating limitations once in the Discussion (ICMJE) is not.
+(v0.5.2: the section base level adapts to `# Title` + `## Sections` layouts; sub-headings under
+a top-level section are never counted as separate sections.)
 
-Every rule carries `confidence` (high/medium/low) and `evidence`
-(literature/style-guide/heuristic/project-specific). Reports show
-`🔴 HIGH · conf high`, so you know which flags are deterministic rules
-(e.g. revision residue) and which are probabilistic signals (e.g. LLM-word density).
+## Confidence / evidence (v0.3)
+
+Every rule carries `confidence` (high/medium/low) and `evidence` (literature/style-guide/heuristic/project-specific).
+Reports show `🔴 HIGH · conf high`, so you know which findings are deterministic rules
+(e.g. "revised" residue) and which are probabilistic signals (e.g. LLM word density).
 
 ## Tools
 
-| Tool | Purpose |
+| tool | purpose |
 |---|---|
-| `writing_audit` | Scan text or file; args: text/filePath, profile, verbose; returns severity+confidence sorted issues and full-text statistics |
-| `writing_rules` | Return the discipline quick-reference (profiles + density) before drafting |
+| `writing_audit` | scan text/file; args: text/filePath, profile, verbose, projectResidueTerms (temporary project-internal vocabulary, current call only); returns issues sorted by severity+confidence plus full-text stats |
+| `writing_rules` | return the writing-discipline cheat sheet (profiles + density rules) |
 
-## Auto audit (on by default)
+### Real output demo
 
-Listens on `tools/post-execute`: after `write`/`edit` touches a paper-like file
-(.md/.tex/.txt under manuscript/paper/revision/response/论文/修订/返修… or KB dirs),
-it runs the audit automatically (profile auto-detected) and injects high-severity
-findings as `additionalContexts` for the model's next request.
-
-**v0.5 incremental lint**: per-file audit state is persisted
-(`~/.dsh/plugins/dsh-plugin-writing-guard/state.json`); each write injects only
-the **delta**:
+`writing_audit` on a paragraph containing revision residue (verbose=true, real output):
 
 ```text
-1 new / 4 resolved / 8 remaining
+写作纪律检查报告（文档类型: manuscript）：发现 3 处问题（高 3 / 中 0 / 低 0）
+- 统计：1 段 / 115 字符（英文 19 词 + 中文 0 字）；破折号 0；rather than 0；不是X而是Y 0；绝对化定义 0；三连排比 0；LLM过渡词 0；中文套话 0；冒号标题 0
+- 分类：修改过程残留 3
+
+🔴 [HIGH · conf high] 正文出现 "revised/revision" 修改过程残留 [para 0]
+    原文：The revised model uses the ΔP regression objective only. As requested by the reviewer, we h…
+    建议：改为中性论文语言：the proposed model / the model / the present analysis，把“修改”动作从正文清除。
+
+🔴 [HIGH · conf high] 审稿回应用语残留 [para 0]
+    原文：The revised model uses the ΔP regression objective only. As requested by the reviewer, we have updated the methods.
+    建议：直接陈述做法或结果本身，不引用审稿过程。
+
+🔴 [HIGH · conf high] "we have updated/modified" 修改叙述 [para 0]
+    原文：…ΔP regression objective only. As requested by the reviewer, we have updated the methods.
+    建议：把句子改写为对最终版本的直接陈述，例如直接描述模型/方法/结果，删除变更动词。
+
+（提示：加 verbose=true 可查看每条的建议与备注；默认只输出原文摘要）
 ```
 
-- no change → nothing injected (the same issues are not re-fed to the agent)
-- only resolved → no immediate notice (batched with the next "added" summary;
-  a single confirmation when everything is cleared)
-- only **new** issues are listed with suggestions; run `writing_audit` manually
-  for the full report
+## Auto-audit (on by default, v0.5 incremental mode)
 
-Configure in `cordis.patch.yml`:
+The plugin listens on `tools/post-execute`: when a **paper-like file** (.md/.tex/.txt whose path
+contains manuscript/paper/revision/response/论文/修订/返修…, or inside knowledge-base dirs like
+01_manuscript/) is written via `write`/`edit`, it auto-audits (auto profile detection) and
+injects the result into the model's next request via `additionalContexts`.
+
+**v0.5 incremental lint**: audit state is persisted per file
+(`~/.dsh/plugins/dsh-plugin-writing-guard/state.json`); each write injects only the **delta**
+(v0.5.2: fingerprints are based on the matched text itself, so editing other words in the same
+paragraph no longer causes false "resolved+added" re-injection):
+
+```text
+新增 1 项 / 已解决 4 项 / 仍存在 8 项   (1 new / 4 resolved / 8 remaining)
+```
+
+- No change → nothing injected (no repeated nagging)
+- Resolved-only → brief confirmation (doesn't consume the per-turn injection budget)
+- Only **new** issues are listed with suggestions; the full list is always available via `writing_audit`
+
+Configuration (web profile `cordis.patch.yml`):
 
 ```yaml
 - id: dsh-plugin-writing-guard
   config:
-    autoAuditOnWrite: true
-    mode: conservative        # conservative|balanced|strict (default conservative=high)
-    autoAuditMinSeverity: high   # explicit value overrides mode
-    maxAutoInjectPerTurn: 2
+    autoAuditOnWrite: true          # auto-audit paper writes (default true)
+    mode: conservative              # conservative|balanced|strict (overrides minSeverity; default conservative=high)
+    autoAuditMinSeverity: high      # high|medium|low (explicit value beats mode)
+    maxAutoInjectPerTurn: 2         # max auto-injections per agent turn (only notifications; tracking always runs)
     verboseByDefault: false
     autoBrief: false
-    projectResidueTerms: []   # project-internal terms appended to defaults
-    # stateFile: leave unset (default ~/.dsh/plugins/dsh-plugin-writing-guard/state.json); never set ''
+    projectResidueTerms: []         # project-internal vocabulary (appended to defaults; flagged as medium)
+    stateFile: ''                   # incremental state file (default ~/.dsh/plugins/dsh-plugin-writing-guard/state.json)
 ```
+
+## FAQ
+
+### Is this an "AI de-flavoring" plugin for DSH?
+
+Sort of — but unlike a traditional Humanizer, Writing Guard detects common AI writing style
+*during* the writing/revision process instead of handing the whole text to another model to rewrite.
+
+### Does it support Chinese papers?
+
+Yes. Rules cover both Chinese and English papers: mechanical expressions, templated transitions,
+revision residue and defensive writing (Chinese by CJK char count, English by word count).
+
+### Does it support SCI / English academic writing?
+
+Yes. `writing_audit` checks English manuscripts for revision residue, defensive writing,
+LLM-overused expressions and common AI-style sentence patterns.
+
+### How is Writing Guard different from academic-humanizer?
+
+academic-humanizer edits existing text toward naturalness; Writing Guard continuously checks
+and prevents issues in the DSH paper workflow. They complement each other.
 
 ## Tests
 
 ```sh
-npm test   # builds first, then 68 TP/TN/edge cases, no framework needed
+npm test   # builds first, then runs 104 TP/TN/edge-case assertions (zero-dependency runner,
+           # incl. isPaperFile/profile detection and fingerprint-stability regressions)
 ```
+
+CI (GitHub Actions) runs build + full tests on every push / PR.
 
 ## Development
 
 ```sh
 pnpm install && pnpm build   # TypeScript -> lib/
-# rule engine: src/rules.ts (zero dependencies, regex + statistics)
+# rule engine: src/rules.ts (zero dependencies, pure regex + statistics)
 ```
 
 ## License

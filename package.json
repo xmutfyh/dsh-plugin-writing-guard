@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "DSH plugin: deterministic academic-writing linter — incremental lint (fingerprint diff: only new/resolved issues injected), segment-pipeline preprocessing with section detection, document-profile-aware scanning, language-aware density thresholds with confidence/evidence; writing_audit + writing_rules tools with auto-audit on paper file writes",
   "type": "module",
   "main": "lib/index.js",
@@ -17,6 +17,18 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xmutfyh/dsh-plugin-writing-guard.git"
+  },
+  "homepage": "https://github.com/xmutfyh/dsh-plugin-writing-guard#readme",
+  "bugs": {
+    "url": "https://github.com/xmutfyh/dsh-plugin-writing-guard/issues"
+  },
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [
     "deepseek-harness",
