@@ -5,6 +5,7 @@
  * 运行：node tests/run-tests.mjs
  */
 import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints } from '../lib/rules.js'
+import { isPaperFile } from '../lib/index.js'
 
 let pass = 0
 let fail = 0
@@ -495,6 +496,132 @@ console.log('=== 26. v0.5.1 LaTeX 引用命令整体删除（\cite 的 key 不�
   // \cite{smith-revised-2025} 里的 "revised" 是 citation key，不应命中；\textbf 的内容保留
   check('latex cite/ref keys stripped (no revised hit)', !hasRule(r, 'revised-family'), JSON.stringify(r.hits.map((h) => h.ruleId)))
   check('latex textbf content kept (important result)', /important result/.test(r.stats.englishWords > 0 ? 'x' : '') || r.stats.englishWords >= 8, `words=${r.stats.englishWords}`)
+}
+
+console.log('=== 27. v0.5.2 isPaperFile 词边界（newspaper/synthesis/coverage/paperwork 不再误判）===')
+{
+  const cwd = 'C:/workspace/proj'
+  for (const p of ['C:/workspace/proj/newspaper-notes.md', 'C:/workspace/proj/notes/synthesis-draft.md', 'C:/workspace/proj/doc/coverage-report.md', 'C:/workspace/proj/readme/paperwork.md']) {
+    check(`isPaperFile TN: ${p.split('/').pop()}`, !isPaperFile(p, cwd), p)
+  }
+  for (const p of ['C:/workspace/proj/manuscript/main.md', 'C:/workspace/proj/01_manuscript/ms.tex', 'C:/workspace/proj/notes/revision_notes.md', 'C:/workspace/proj/response_letter.md', 'C:/workspace/proj/修订稿.md', 'C:/workspace/proj/reviewer2_comments.md']) {
+    check(`isPaperFile TP: ${p.split('/').pop()}`, isPaperFile(p, cwd), p)
+  }
+  // 知识库目录前缀匹配（cwd 相对路径）
+  check('isPaperFile TP: root-dir prefix (01_manuscript/)', isPaperFile('01_manuscript/draft.md', cwd))
+  check('isPaperFile TN: root-dir not matching', !isPaperFile('10_notes/draft.md', cwd))
+}
+
+console.log('=== 28. v0.5.2 profile 检测扩展（reviewer2 / my_notes / revision 对齐）===')
+{
+  check('reviewer2_comments → review', detectDocumentProfile('reviewer2_comments.md') === 'review')
+  check('reviewer 2 comments → review', detectDocumentProfile('Reviewer 2 comments.md') === 'review')
+  check('my_notes → notes', detectDocumentProfile('my_notes.md') === 'notes')
+  check('draft_notes → notes', detectDocumentProfile('draft_notes.md') === 'notes')
+  check('revision_notes → manuscript（与 isPaperFile 对齐，不再 unknown）', detectDocumentProfile('revision_notes.md') === 'manuscript')
+  check('revision_response → rebuttal', detectDocumentProfile('revision_response.md') === 'rebuttal')
+  check('Supplementary_revision_notes → manuscript', detectDocumentProfile('Supplementary_revision_notes.md') === 'manuscript')
+  // 原有判定不回退
+  check('regression: response_to_reviewers → rebuttal', detectDocumentProfile('response_to_reviewers.md') === 'rebuttal')
+  check('regression: systematic_review → manuscript', detectDocumentProfile('systematic_review.md') === 'manuscript')
+  check('regression: notes.txt → notes', detectDocumentProfile('notes.txt') === 'notes')
+}
+
+console.log('=== 29. v0.5.2 we-have-changed 组合时态 ===')
+{
+  const r = auditText('We have now updated the methods section entirely. We now have also corrected the abstract.', { profile: 'manuscript' })
+  check('"we have now updated" TP', hasRule(r, 'we-have-changed'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+  check('two hits in one paragraph both reported', r.hits.filter((h) => h.ruleId === 'we-have-changed').length === 2, JSON.stringify(r.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 30. v0.5.2 rule-of-three 大小写不敏感 ===')
+{
+  const r = auditText('The method is Clear, Concise, and Compelling in its presentation. The style is precise, direct, and vivid overall.', { profile: 'manuscript' })
+  // 2 处 < minCount 4 → 不报（阈值规则），但 stats 应计数；用 4 处验证 TP
+  const dense = auditText(
+    'The method is Clear, Concise, and Compelling in its presentation. The style is precise, direct, and vivid overall. ' +
+    'The results are robust, reproducible, and generalizable. The writing is terse, exact, and unadorned.',
+    { profile: 'manuscript' },
+  )
+  check('rule-of-three TP with leading capitals (4+ hits)', hasRule(dense, 'rule-of-three'), JSON.stringify(dense.hits.map((h) => h.snippet)))
+  check('rule-of-three counts capitalized lists in stats', r.stats.ruleOfThreeCount >= 2, `count=${r.stats.ruleOfThreeCount}`)
+}
+
+console.log('=== 31. v0.5.2 指纹稳定：同段其他文字编辑不产生假 resolved+added ===')
+{
+  const v1 = auditText('The revised model uses the ΔP regression objective only, and the results are presented in the next section.', { profile: 'manuscript' })
+  const v2 = auditText('The revised model uses the ΔP regression objective only, and the results are NOW presented in the following section of the paper.', { profile: 'manuscript' })
+  const fp1 = v1.hits.filter((h) => h.ruleId === 'revised-family').map(hitFingerprint)
+  const fp2 = v2.hits.filter((h) => h.ruleId === 'revised-family').map(hitFingerprint)
+  check('fingerprint unchanged by same-paragraph edits elsewhere', fp1.length === 1 && fp2.length === 1 && fp1[0] === fp2[0], `a=${fp1[0]} b=${fp2[0]}`)
+  const diff = diffAudit(new Set(fp1), v2.hits)
+  check('diff: no false resolved+added on same-paragraph edit', diff.added.length === 0 && diff.resolved.length === 0, `added=${diff.added.length} resolved=${diff.resolved.length}`)
+
+  // 真正修复后：指纹消失 → resolved
+  const fixed = auditText('The model uses the ΔP regression objective only, and the results are presented in the next section.', { profile: 'manuscript' })
+  const diff2 = diffAudit(new Set(fp1), fixed.hits)
+  check('diff: real fix still resolves', diff2.resolved.length === 1, `resolved=${diff2.resolved.length}`)
+}
+
+console.log('=== 32. v0.5.2 同段多处命中全部报告（maxHits 全局上限内）===')
+{
+  const r = auditText('The revised model is good. The revised method is better. The revised approach is best.', { profile: 'manuscript' })
+  const n = r.hits.filter((h) => h.ruleId === 'revised-family').length
+  check('3 occurrences in one paragraph → 3 hits', n === 3, `n=${n}`)
+  // 指纹各不相同? 相同命中词 → 共享指纹（保守去重），但 hit 都保留
+  const fps = new Set(r.hits.filter((h) => h.ruleId === 'revised-family').map(hitFingerprint))
+  check('shared fingerprint for identical match text (by design)', fps.size === 1, `fps=${[...fps]}`)
+}
+
+console.log('=== 33. v0.5.2 section 基准层级：# 标题 + ## 章节 也能跨章节检测 ===')
+{
+  // 常见 Markdown 结构：# 论文标题 + ## Introduction/Methods/Results（局限分散 3 章）
+  const doc = [
+    '# A Study of X',
+    'Abstract prose without limitation words.',
+    '## Introduction',
+    'The limitations of prior work are known.',
+    '## Methods',
+    'This method has limitations in generalization.',
+    '## Results',
+    'Results show limited applicability.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  check('limitations-across-sections TP with # title + ## sections', hasRule(r, 'limitations-across-sections'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+
+  // 反向：## 为章节时，# 下的 H1 不应拆散 section（回归测试 25 的语义保持）
+  const ok = auditText(
+    ['# Paper', '## Discussion', '### Sample size', 'This limitation affects precision.', '### External validity', 'Another limitation is scope.'].join('\n'),
+    { profile: 'manuscript' },
+  )
+  check('H3 under H2 under H1 stays one section (no false positive)', !hasRule(ok, 'limitations-across-sections'), JSON.stringify(ok.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 34. v0.5.2 References 后的 Appendix 不再被吞 ===')
+{
+  const doc = [
+    'The model is evaluated in this study.',
+    '',
+    '# References',
+    '1. Smith J. A revised approach to drying. 2020.',
+    '',
+    '## Appendix',
+    'The revised model is described in detail here.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  check('appendix prose after References still scanned (revised hit)', hasRule(r, 'revised-family'), JSON.stringify(r.hits.map((h) => h.snippet)))
+  check('references entry itself still excluded', r.hits.filter((h) => h.snippet.includes('A revised approach to drying')).length === 0, JSON.stringify(r.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 35. v0.5.2 project-residue 指纹稳定（术语替换才 resolved）===')
+{
+  const v1 = auditText('The source_map was updated in the pipeline.', { profile: 'manuscript', projectResidueTerms: ['source_map'] })
+  const fp1 = v1.hits.filter((h) => h.ruleId === 'project-residue').map(hitFingerprint)
+  const v2 = auditText('The source_map was updated in the revised pipeline.', { profile: 'manuscript', projectResidueTerms: ['source_map'] })
+  const fp2 = v2.hits.filter((h) => h.ruleId === 'project-residue').map(hitFingerprint)
+  check('project-residue fingerprint stable across unrelated edits', fp1.length === 1 && fp2.length === 1 && fp1[0] === fp2[0], `a=${fp1[0]} b=${fp2[0]}`)
+  const v3 = auditText('The mapping table was updated in the pipeline.', { profile: 'manuscript', projectResidueTerms: ['source_map'] })
+  check('project-residue resolved when term removed', diffAudit(new Set(fp1), v3.hits).resolved.length === 1)
 }
 
 console.log('')
