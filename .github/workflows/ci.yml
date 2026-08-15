@@ -10,9 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 版本统一从 package.json 的 packageManager 字段读取（pnpm@11.21.0），
+      # 不再显式传 version，避免 "Multiple versions of pnpm specified" 冲突
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22

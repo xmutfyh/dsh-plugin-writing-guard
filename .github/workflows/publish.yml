@@ -11,9 +11,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # 版本统一从 package.json 的 packageManager 字段读取，不显式传 version
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
