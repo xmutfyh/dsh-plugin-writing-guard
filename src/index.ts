@@ -1,7 +1,16 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { auditText, formatReport, rulesBrief, type AuditReport } from './rules.ts'
+import {
+  auditText,
+  formatReport,
+  rulesBrief,
+  filterReport,
+  detectDocumentProfile,
+  type AuditReport,
+  type Severity,
+  type DocumentProfile,
+} from './rules.ts'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -17,13 +26,15 @@ export interface Config {
   /**
    * 论文文件写入后是否自动审计并注入结果（默认 true）。
    * 监听 write/edit 目标文件：.md/.tex/.txt 且路径含论文特征（manuscript/paper/论文/修订/revision/response/回复/rebuttal）
-   * 或工作区根包含论文特征目录（01_manuscript/02_reviews/08_response 等知识库布局）。
+   * 或位于论文目录（01_manuscript/02_reviews/08_response 等知识库布局）。
    */
   autoAuditOnWrite: boolean
   /** 自动审计的最低严重度（默认 high；high=只提示高危残留/防御性写作） */
-  autoAuditMinSeverity: 'high' | 'medium' | 'low'
+  autoAuditMinSeverity: Severity
   /** 每个 agent 每轮最多自动注入次数（防止刷屏，默认 2） */
   maxAutoInjectPerTurn: number
+  /** 项目内部词表（追加到默认内部词，命中按 medium 报） */
+  projectResidueTerms: string[]
 }
 
 export const Config: Config = {
@@ -32,7 +43,11 @@ export const Config: Config = {
   autoAuditOnWrite: true,
   autoAuditMinSeverity: 'high',
   maxAutoInjectPerTurn: 2,
+  projectResidueTerms: [],
 }
+
+/** 默认项目内部词表（通用痕迹，不含 priority/SHA-256 等普通学术词） */
+const DEFAULT_PROJECT_TERMS = ['source_map', 'reader 锚点', 'iteration_log', 'final_audit', 'blueprint', 'full_corpus']
 
 /** 从文件读取文本（.txt/.md/.markdown 直接读；.docx 请先经 anydoc 转 Markdown） */
 async function readTextFile(filePath: string): Promise<string> {
@@ -49,14 +64,14 @@ const MANUSCRIPT_EXT = new Set(['.md', '.markdown', '.tex', '.txt'])
 
 /** 论文特征路径段（相对路径任意层级命中即视为论文文件） */
 const PAPER_PATH_HINTS = [
-  'manuscript', 'paper', 'thesis', 'review', 'revision', 'revised', 'response', 'rebuttal', 'cover',
+  'manuscript', 'paper', 'thesis', 'revision', 'revised', 'response', 'rebuttal', 'cover',
   '论文', '稿件', '修订', '返修', '回复', '审稿',
 ]
 
-/** 知识库布局中的论文目录（工作区根下） */
-const PAPER_ROOT_DIRS = new Set([
+/** 知识库布局中的论文目录（工作区根下；支持多级路径前缀匹配） */
+const PAPER_ROOT_DIRS = [
   '01_manuscript', '02_reviews', '03_evidence', '08_response', '09_wiki/writing',
-])
+]
 
 function isPaperFile(filePath: string, cwd?: string): boolean {
   const ext = path.extname(filePath).toLowerCase()
@@ -66,8 +81,8 @@ function isPaperFile(filePath: string, cwd?: string): boolean {
   if (cwd) {
     const rel = path.relative(cwd, filePath).replace(/\\/g, '/').toLowerCase()
     if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
-      const firstSeg = rel.split('/')[0]
-      if (firstSeg && [...PAPER_ROOT_DIRS].some((d) => d.toLowerCase() === firstSeg)) return true
+      // 前缀匹配（支持 09_wiki/writing 这类多级目录）
+      if (PAPER_ROOT_DIRS.some((d) => rel === d || rel.startsWith(d + '/'))) return true
     }
   }
   return false
@@ -82,29 +97,22 @@ function targetPathOf(exec: { name?: string; arguments?: unknown }): string | nu
   return typeof p === 'string' && p ? p : null
 }
 
-/** 按严重度过滤 hits，返回摘要文本 */
-function summarizeHits(report: AuditReport, minSeverity: 'high' | 'medium' | 'low'): AuditReport {
-  const order: Record<string, number> = { high: 0, medium: 1, low: 2 }
-  const threshold = order[minSeverity]
-  return {
-    ...report,
-    hits: report.hits.filter((h) => order[h.severity] >= threshold),
-  }
-}
-
 export function apply(ctx: Context, config: Config = Config): void {
   const cfg = { ...Config, ...config }
+  const projectTerms = [...new Set([...DEFAULT_PROJECT_TERMS, ...cfg.projectResidueTerms])]
 
   ctx.tools.register(defineTool({
     name: 'writing_audit',
     description:
-      '对论文/稿件文本执行写作纪律扫描（本地规则，零网络）：检测修改过程语句残留（revised/本轮/投稿前…）、' +
-      '防御性写作（we do not claim/本文并非要证明…）、AI 痕迹句式（破折号密度/不是X而是Y/rather than 滥用/绝对化定义/冒号标题/抽象副词/LLM高频词 delve-tapestry-testament/三连排比/过渡词）' +
-      '与一般文体问题。输入 text（正文内容）或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。' +
-      '返回按严重度排序的违规清单与全文统计；写作或修改完稿后应运行一次。',
+      '对论文/稿件文本执行写作纪律扫描（本地规则，零网络）：检测修改过程残留（revised/本轮/投稿前…）、' +
+      '主张校准（we do not claim/本文并非要证明…）、修辞模式（不是X而是Y/rather than/三连排比/绝对化）、' +
+      'LLM 关联词（delve/tapestry/过渡词堆叠/中文套话）、学术文体与格式（抽象副词/破折号密度/冒号标题）。' +
+      '可指定 profile（manuscript/rebuttal/cover_letter/review/notes）区分文档类型——rebuttal 中 "as requested" 不报警。' +
+      '频率类规则按密度（次/千词）计算。输入 text 或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。',
     parameters: {
       text: { type: 'string', description: '要检查的文本内容（与 filePath 二选一）' },
       filePath: { type: 'string', description: '要检查的文本文件路径（.txt/.md；二选一）' },
+      profile: { type: 'string', enum: ['manuscript', 'rebuttal', 'cover_letter', 'review', 'notes', 'unknown'], description: '文档类型（可选；缺省按路径自动检测，纯文本默认 unknown）' },
       verbose: { type: 'boolean', description: 'true 时输出每条问题的提示与修改建议（默认 false，只输出原文摘要）' },
     },
     output: {
@@ -114,13 +122,19 @@ export function apply(ctx: Context, config: Config = Config): void {
     isConcurrencySafe: () => true,
     async execute(args) {
       let text = args.text as string | undefined
+      let profile: DocumentProfile | undefined
+      if (args.profile && args.profile !== 'unknown') {
+        profile = args.profile as DocumentProfile
+      } else if (args.filePath) {
+        profile = detectDocumentProfile(args.filePath)
+      }
       if (!text && args.filePath) {
         text = await readTextFile(args.filePath)
       }
       if (!text || !text.trim()) {
         throw new Error('需要提供 text 或 filePath（内容不能为空）')
       }
-      const report = auditText(text)
+      const report = auditText(text, { profile, projectResidueTerms: projectTerms })
       const verbose = args.verbose ?? cfg.verboseByDefault
       return formatReport(report, { verbose })
     },
@@ -129,8 +143,9 @@ export function apply(ctx: Context, config: Config = Config): void {
   ctx.tools.register(defineTool({
     name: 'writing_rules',
     description:
-      '返回论文写作纪律速查清单（dsh-plugin-writing-guard）：修改过程残留、防御性写作、AI 痕迹句式（审稿人识别重点，' +
-      '含 LLM 高频词表）、发布会原则与自查项。写作/修改任何论文段落前可先调用本工具加载纪律，写完后用 writing_audit 复查。' +
+      '返回论文写作纪律速查清单（dsh-plugin-writing-guard v0.3）：修改过程残留、主张校准、修辞模式、LLM 关联词、' +
+      '学术文体与格式、发布会原则与自查项（含文档类型 profile 与密度规则说明）。' +
+      '写作/修改任何论文段落前可先调用本工具加载纪律，写完后用 writing_audit 复查。' +
       '插件也会在论文文件被写入后自动审计（autoAuditOnWrite）。',
     parameters: {},
     output: {
@@ -172,18 +187,20 @@ export function apply(ctx: Context, config: Config = Config): void {
 
         let report: AuditReport
         try {
-          report = auditText(await readTextFile(target))
+          const profile = detectDocumentProfile(target)
+          report = auditText(await readTextFile(target), { profile, projectResidueTerms: projectTerms })
         } catch {
           return decision // 二进制/不可读文件跳过
         }
-        const filtered = summarizeHits(report, cfg.autoAuditMinSeverity)
+        // 修正版过滤：high > medium > low，且重算 summary
+        const filtered = filterReport(report, cfg.autoAuditMinSeverity)
         if (filtered.hits.length === 0) return decision
 
         const nextCount = (state && state.turn === turn ? state.count : 0) + 1
         injectCounts.set(agent.id, { turn, count: nextCount })
 
         const text = [
-          `【dsh-plugin-writing-guard 自动审计】刚写入的论文文件 "${target}" 发现 ${filtered.summary.total} 处写作纪律问题（高 ${filtered.summary.high} / 中 ${filtered.summary.medium} / 低 ${filtered.summary.low}）：`,
+          `【dsh-plugin-writing-guard 自动审计】刚写入的论文文件 "${target}"（profile: ${report.profile}）发现 ${filtered.summary.total} 处写作纪律问题（高 ${filtered.summary.high} / 中 ${filtered.summary.medium} / 低 ${filtered.summary.low}）：`,
           '',
           formatReport(filtered, { verbose: false }),
           '',

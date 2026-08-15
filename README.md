@@ -2,9 +2,12 @@
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
-DSH（DeepSeek Harness）宿主插件：**AI 论文写作常见错误守卫**。把「写作纪律」做成常驻工具，
-任何会话、任何论文在写作或修改前后都能一键扫描（也可全自动触发），避免审稿人一眼看穿的
-AI 写作痕迹、防御性写作和修改过程语句残留。
+DSH（DeepSeek Harness）宿主插件：**确定性学术写作 linter（deterministic academic-writing linter）**。
+把「写作纪律」做成常驻工具，任何会话、任何论文在写作或修改前后都能一键扫描（也可全自动触发），
+避免审稿人一眼看穿的 AI 写作痕迹、防御性写作和修改过程语句残留。
+
+> 定位：不是 "AI 检测器"，而是一个知道自己在检查什么文档、能解释"为什么报"的写作 linter。
+> 所有规则为本地正则/统计，零网络、零 LLM 调用，毫秒级返回。
 
 ## 安装
 
@@ -24,68 +27,85 @@ dsh web
 
 仓库：https://github.com/xmutfyh/dsh-plugin-writing-guard
 
+## 文档类型感知（document profiles，v0.3）
+
+同一段文字在不同文档里含义不同。插件按文档类型应用规则：
+
+| profile | 说明 | 例：`as requested by the reviewer` |
+|---|---|---|
+| `manuscript` | 论文正文 | 🔴 修改过程残留，报警 |
+| `rebuttal` | 逐条回复信 | ✅ 正常表述，不报警 |
+| `cover_letter` | 投稿信 | 🔴 残留，报警 |
+| `review` / `notes` / `unknown` | 其他 | 保守处理 |
+
+`writing_audit` 可通过 `profile` 参数指定，或从文件路径自动检测（rebuttal/cover_letter/manuscript 关键词）。
+
 ## 解决的问题
 
 基于审稿人分享的 AI 写作识别清单（破折号铺天盖地、"它不是X而是Y"、绝对化定义、冒号滥用）
-与"扬长避短/发布会原则"提示词，以及网络研究（Kobak et al., Science Advances 2024 统计
-1400 万摘要的 LLM 高频词；社区词表 delve/tapestry/testament/leverage 等），自动检测：
+与"扬长避短/发布会原则"提示词，以及网络研究（Kobak et al., Science Advances 2025，>1500 万
+biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/leverage 等），自动检测：
 
 | 类别 | 典型问题 |
 |---|---|
 | 修改过程残留 | "revised model"、"as requested"、"we have updated"、"本轮/投稿前/审稿人要求" |
-| 防御性写作 | "we do not claim"、"本文并非要证明"、"这并不意味着"、"本研究存在一定局限性" |
-| AI 痕迹句式 | 破折号 ≥6、"不是X而是Y"/"not X but Y"、"rather than" 滥用、绝对化定义、冒号标题、抽象副词 |
-| LLM 高频词 | delve/tapestry/testament/leverage/harness/underscore/pivotal/meticulous 等 |
-| LLM 结构痕迹 | moreover/furthermore/in conclusion 过渡词堆叠、三连排比（X, Y, and Z）、中文套话（值得注意的是/综上所述） |
-| 文体问题 | "we believe/think"、模糊程度词堆叠 |
+| 主张校准 | "we do not claim"、"本文并非要证明"、自我削弱词；研究局限性正当陈述不报警（ICMJE 要求） |
+| 修辞模式 | "不是X而是Y"/"not X but Y"、rather than 滥用、绝对化定义、三连排比 |
+| LLM 关联词 | delve/tapestry/testament/leverage/harness 等（密度规则，单次出现不报警） |
+| 学术文体 | we believe/think、模糊词、抽象副词；"significantly" 仅提示复核统计语境 |
+| 格式 | 破折号密度（范围连字符不算）、冒号标题 |
 
-规则来源：`09_wiki/writing/写作纪律_防AI痕迹与防御性写作.md` + 网络 LLM 风格分析
-（[Science Advances](https://www.science.org/doi/full/10.1126/sciadv.adt3813)、
-[Metric37](https://metric37.com/blog/common-ai-words-and-phrases)、
-[Diglot](https://diglot.ai/blog/chatgpt-words-to-avoid)），全部为本地正则/统计，
-零网络、零 LLM 调用，毫秒级返回。
+## 密度阈值（v0.3）
+
+频率类规则按 **次/千词** 密度计算（不再用绝对次数）：`count >= minCount AND count/words*1000 >= perKWords` 才报警。
+例如 rather than：≥4 次且 ≥1.0/千词；破折号：≥5 次且 ≥0.5/千词；LLM 高频词：≥2 次且 ≥0.4/千词。
+500 字摘要和 12000 字全文不再用同一阈值。
+
+## confidence / evidence（v0.3）
+
+每条规则带 `confidence`（high/medium/low）与 `evidence`（literature/style-guide/heuristic/project-specific）。
+报告显示 `🔴 HIGH · conf high`，用户知道哪些是确定性规则（如 revised 残留）、哪些是概率信号
+（如 LLM 高频词密度）。
 
 ## 工具
 
 | 工具 | 用途 |
 |---|---|
-| `writing_audit` | 输入文本或 .txt/.md 文件，返回按严重度（🔴高/🟠中/🟡低）排序的违规清单 + 全文统计 |
-| `writing_rules` | 返回写作纪律速查清单，写作前加载纪律用 |
+| `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose；返回按严重度+置信度排序的问题清单与全文统计 |
+| `writing_rules` | 返回写作纪律速查（含 profile 与密度说明） |
 
 ## 自动审计（默认开启）
 
-插件监听 `tools/post-execute`：当 `write`/`edit` 工具写入**论文类文件**时自动执行
-`writing_audit`，发现高危问题（如 "revised" 残留、防御性声明）后把审计结果作为
-`additionalContexts` 注入模型下一条请求，**无需手动调用**，agent 下一轮会自动修正。
+插件监听 `tools/post-execute`：`write`/`edit` 写入**论文类文件**（.md/.tex/.txt，路径含
+manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manuscript/ 等知识库目录）时
+自动审计（自动检测文档 profile），高危问题经 `additionalContexts` 注入模型下一条请求。
 
-- 论文文件识别：`.md/.tex/.txt` 且路径含论文特征（manuscript/paper/revision/response/论文/修订/返修…）
-  或位于论文目录（`01_manuscript/`、`02_reviews/`、`08_response/` 等知识库布局）
-- 配置项（web profile `cordis.patch.yml`）：
+配置（web profile `cordis.patch.yml`）：
 
 ```yaml
 - id: dsh-plugin-writing-guard
   config:
-    autoAuditOnWrite: true        # 论文文件写入后自动审计（默认 true）
-    autoAuditMinSeverity: high    # 自动审计最低严重度：high|medium|low
-    maxAutoInjectPerTurn: 2       # 每轮最多自动注入次数（防刷屏）
-    verboseByDefault: false       # audit 是否默认输出每条建议
-    autoBrief: false              # 每轮是否自动注入纪律速查
+    autoAuditOnWrite: true          # 论文文件写入后自动审计（默认 true）
+    autoAuditMinSeverity: high      # high|medium|low
+    maxAutoInjectPerTurn: 2         # 每轮最多自动注入次数
+    verboseByDefault: false
+    autoBrief: false
+    projectResidueTerms: []         # 项目内部词表（追加到默认词表，命中按 medium 报）
 ```
 
-## 使用
+## 测试
 
-写作或修改完一段/全文后（手动）：
-
-```
-请对刚刚修改的段落执行 writing_audit，verbose=true
+```sh
+node tests/run-tests.mjs   # 26 项 TP/TN/边界用例（无测试框架依赖）
 ```
 
-开始写作前（手动）：
+## 开发
 
+```sh
+pnpm install && pnpm build   # TypeScript -> lib/
+# 规则引擎：src/rules.ts（零依赖，纯正则+统计）
 ```
-调用 writing_rules 获取写作纪律，然后按纪律起草
-```
 
-自动模式下无需任何调用：插件会在论文文件被写入后自动检查并提示。
+## License
 
-`.docx/.pdf` 请先用 `anydoc` 工具转为 Markdown，再执行 `writing_audit`。
+MIT

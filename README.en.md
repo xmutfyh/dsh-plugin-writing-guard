@@ -2,13 +2,16 @@
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
-**AI paper-writing style guard for DeepSeek Harness (DSH).**
+**A deterministic academic-writing linter for DeepSeek Harness (DSH).**
 
-A host plugin that keeps your academic writing clean: it scans manuscripts for
-**revision-process residue**, **defensive writing**, and **AI-writing tells**
-— the patterns reviewers recognize as machine-generated text — and can audit
-automatically every time you write a paper file. Works in any session, on any
-paper, with zero network calls and zero LLM cost (pure local regex/statistics).
+Keeps your academic writing clean: it scans manuscripts for **revision-process
+residue**, **claim-calibration issues**, **rhetorical patterns**, **LLM-associated
+vocabulary**, and **formatting tells** — with **document-type awareness** and
+**density-based thresholds**. Auto-audits every paper file you write. Zero network,
+zero LLM cost (pure local regex/statistics).
+
+> Not an "AI detector" — a linter that knows what document it is checking and can
+> explain why it flags something.
 
 ## Install
 
@@ -25,79 +28,83 @@ dsh web
 
 Repo: <https://github.com/xmutfyh/dsh-plugin-writing-guard>
 
+## Document profiles (v0.3)
+
+The same phrase means different things in different documents. Rules are scoped
+by document type:
+
+| profile | meaning | e.g. "as requested by the reviewer" |
+|---|---|---|
+| `manuscript` | paper body | 🔴 revision residue — flagged |
+| `rebuttal` | response letter | ✅ normal — not flagged |
+| `cover_letter` | submission letter | 🔴 residue — flagged |
+| `review` / `notes` / `unknown` | other | conservative |
+
+Pass `profile` to `writing_audit`, or it is auto-detected from the file path.
+
 ## What it catches
 
 | Category | Typical issues |
 |---|---|
-| Revision residue | "revised model", "as requested", "we have updated", "本轮/投稿前/审稿人要求" (CN) |
-| Defensive writing | "we do not claim", "本文并非要证明", "这并不意味着", "this study has certain limitations" |
-| AI-style patterns | em-dash density ≥6, "不是X而是Y" / "not X but Y", "rather than" abuse, absolutist definitions, colon titles, abstract filler adverbs |
-| LLM overused words | delve / tapestry / testament / leverage / harness / underscore / pivotal / meticulous / realm / foster / navigate / streamline / seamless / showcase / boast / unlock / elevate / intricate / nuanced / multifaceted / cutting-edge / state-of-the-art |
-| LLM structural tells | moreover/furthermore/in conclusion stacking, rule of three ("clear, concise, and compelling"), Chinese AI connectives (值得注意的是/综上所述/随着…的发展) |
-| Style issues | "we believe/think", hedge stacking (somewhat/quite/fairly) |
+| Process residue | "revised model", "as requested", "we have updated", CN "本轮/投稿前" |
+| Claim calibration | "we do not claim", CN "本文并非要证明", self-deprecation; legitimate limitations statements are NOT flagged (ICMJE requires them) |
+| Rhetorical patterns | "not X but Y", "rather than" abuse, absolutist definitions, rule of three |
+| LLM-associated words | delve / tapestry / testament / leverage / harness… (density rule — a single occurrence is fine) |
+| Academic style | "we believe/think", hedges, abstract adverbs; "significantly" only prompts review of non-statistical uses |
+| Formatting | em-dash density (range en-dashes excluded), colon-title abuse |
 
-Rule sources: the reviewer-shared AI-writing tell list (em-dash abuse, contrast
-formulas, absolutist definitions, colon abuse), the "launch-event" writing
-principle (扬长避短), the ESR scoping-review guide, and published research on
-LLM vocabulary spikes ([Kobak et al., Science Advances 2024](https://www.science.org/doi/full/10.1126/sciadv.adt3813), 14M PubMed abstracts) plus community word lists ([Metric37](https://metric37.com/blog/common-ai-words-and-phrases), [Diglot](https://diglot.ai/blog/chatgpt-words-to-avoid)).
+## Density thresholds (v0.3)
 
-> These are probabilistic tells, not proof — a single occurrence is fine;
-> density is the signal. `synergy` (e.g. "thermodynamic synergy") is a
-> legitimate scientific term and is intentionally NOT flagged.
+Frequency rules use **occurrences per 1,000 words**: flag only when
+`count >= minCount AND count/words*1000 >= perKWords`. E.g. rather than: ≥4 and
+≥1.0/1k; em-dash: ≥5 and ≥0.5/1k; LLM words: ≥2 and ≥0.4/1k. A 500-word abstract
+and a 12,000-word full paper no longer share one absolute threshold.
+
+## Confidence & evidence (v0.3)
+
+Every rule carries `confidence` (high/medium/low) and `evidence`
+(literature/style-guide/heuristic/project-specific). Reports show
+`🔴 HIGH · conf high`, so you know which flags are deterministic rules
+(e.g. revision residue) and which are probabilistic signals (e.g. LLM-word density).
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `writing_audit` | Scan text or a .txt/.md file; returns issues sorted by severity (🔴 high / 🟠 medium / 🟡 low) plus full-text statistics (em-dash count, rather-than count, not-X-but-Y, rule-of-three, LLM transition words, Chinese connectives…) |
-| `writing_rules` | Return the writing-discipline quick reference before you start drafting |
+| `writing_audit` | Scan text or file; args: text/filePath, profile, verbose; returns severity+confidence sorted issues and full-text statistics |
+| `writing_rules` | Return the discipline quick-reference (profiles + density) before drafting |
 
 ## Auto audit (on by default)
 
-The plugin listens on `tools/post-execute`: after `write`/`edit` touches a
-**paper-like file** (`.md/.tex/.txt` whose path contains manuscript/paper/
-revision/response/论文/修订/返修…, or that lives under paper dirs such as
-`01_manuscript/`, `02_reviews/`, `08_response/`), it runs `writing_audit`
-automatically and injects any high-severity findings as `additionalContexts`
-for the model's next request — the agent fixes them without being asked.
-Bounded to a few injections per turn to avoid noise.
+Listens on `tools/post-execute`: after `write`/`edit` touches a paper-like file
+(.md/.tex/.txt under manuscript/paper/revision/response/论文/修订/返修… or KB dirs),
+it runs the audit automatically (profile auto-detected) and injects high-severity
+findings as `additionalContexts` for the model's next request.
 
-Configure in your web profile's `cordis.patch.yml`:
+Configure in `cordis.patch.yml`:
 
 ```yaml
 - id: dsh-plugin-writing-guard
   config:
-    autoAuditOnWrite: true        # audit paper files after write/edit (default true)
-    autoAuditMinSeverity: high    # high | medium | low
-    maxAutoInjectPerTurn: 2       # injection budget per turn
-    verboseByDefault: false       # include per-hit suggestions by default
-    autoBrief: false              # inject the discipline brief every turn
+    autoAuditOnWrite: true
+    autoAuditMinSeverity: high
+    maxAutoInjectPerTurn: 2
+    verboseByDefault: false
+    autoBrief: false
+    projectResidueTerms: []   # project-internal terms appended to defaults
 ```
 
-## Usage
+## Tests
 
-After writing/editing a passage or full text (manual):
-
+```sh
+node tests/run-tests.mjs   # 26 TP/TN/edge cases, no framework needed
 ```
-Run writing_audit on the passage I just revised, verbose=true
-```
-
-Before drafting:
-
-```
-Call writing_rules to load the writing discipline, then draft accordingly
-```
-
-With auto audit on, no call is needed — the plugin checks paper files for you.
-
-`.docx`/`.pdf` files: convert with the `anydoc` tool first, then run
-`writing_audit` on the Markdown.
 
 ## Development
 
 ```sh
 pnpm install && pnpm build   # TypeScript -> lib/
-# rules engine: src/rules.ts (zero dependencies, pure regex + statistics)
+# rule engine: src/rules.ts (zero dependencies, regex + statistics)
 ```
 
 ## License
