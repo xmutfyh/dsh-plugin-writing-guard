@@ -59,13 +59,16 @@
 ## 安装
 
 ```sh
+# 从 npm 安装（已发布，推荐）
+dsh plugin --profile web add dsh-plugin-writing-guard
+
 # 从 GitHub 安装（lib/ 已提交，无需构建）
 dsh plugin --profile web add github:xmutfyh/dsh-plugin-writing-guard
 
 # 或直接从 GitHub tarball 安装
 dsh plugin --profile web add https://github.com/xmutfyh/dsh-plugin-writing-guard/archive/refs/heads/master.tar.gz
 
-# 或从本地源码目录安装（发布 npm 后可直接按包名安装）
+# 或从本地源码目录安装
 dsh plugin --profile web add ./path/to/dsh-plugin-writing-guard
 
 # 重启生效

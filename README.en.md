@@ -53,13 +53,16 @@ evasion of any AI-detection system.
 ## Install
 
 ```sh
+# From npm (published — recommended)
+dsh plugin --profile web add dsh-plugin-writing-guard
+
 # From GitHub (lib/ is committed — no build needed)
 dsh plugin --profile web add github:xmutfyh/dsh-plugin-writing-guard
 
 # Or from the GitHub tarball
 dsh plugin --profile web add https://github.com/xmutfyh/dsh-plugin-writing-guard/archive/refs/heads/master.tar.gz
 
-# Or from a local source directory (after publishing to npm, install by package name)
+# Or from a local source directory
 dsh plugin --profile web add ./path/to/dsh-plugin-writing-guard
 
 # Restart to apply
