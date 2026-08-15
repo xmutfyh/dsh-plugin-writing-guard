@@ -123,6 +123,12 @@ export interface Rule {
   /** 密度规则的计数器（v0.3.1：单一数据源）。缺省用 pattern 对全文计数；
    *  只有 colon-title 等真正需要特殊算法的才提供。 */
   counter?: (text: string) => number
+  /** v0.4：规则扫描的 segment 类型（缺省 ['prose']——references/code/math/table 默认忽略） */
+  segments?: SegmentKind[]
+  /** v0.4：section-based 专用规则（如 limitation-dispersal：跨章节分散检测，不走 density/段落扫描） */
+  sectionBased?: boolean
+  /** section-based 规则的触发阈值：命中章节数 ≥ 该值才报 */
+  sectionThreshold?: number
 }
 
 export interface Hit {
@@ -330,13 +336,16 @@ const RULES: Rule[] = [
     category: 'claim_calibration',
     severity: 'low',
     confidence: 'medium',
-    label: '局限性分散重复',
+    label: '局限性跨章节分散',
+    // v0.4：不再用词频 threshold——改由 detectSections 检测"同一局限散落在 ≥3 个章节"
     pattern: /(limitation|局限|不足|cannot be (generalized|extended)|not be applied)/gi,
-    threshold: { minCount: 3, perK: 0.5 },
-    message: '“局限/limitation”类表述全文出现较多（≥3 次且密度 ≥0.5/千词），可能在多个章节重复免责。',
+    message: '“局限/limitation”类表述散落在多个章节（≥3 个 section），同一局限在多处重复免责。',
     suggestion: '边界声明集中写：方法定位一处 + 结论边界一处；其余用证据角色表达。注意：在 Discussion 中正当陈述局限（ICMJE 要求）不算问题，重点是避免同一局限在多个章节重复。',
     languages: ['zh', 'en'],
     evidence: { type: 'style-guide', source: 'ESR 指南：边界声明集中写' },
+    /** v0.4：section-based 专用规则标记 */
+    sectionBased: true,
+    sectionThreshold: 3,
   },
 
   // ================= rhetorical_pattern 修辞模式 =================
@@ -533,6 +542,8 @@ const RULES: Rule[] = [
     message: '检测到多个“XXX: XXXXXXX”式标题。审稿人指出：标题冒号前后必须是适合冒号的关系（并列或递进），否则明显是硬凑。',
     suggestion: '检查每个冒号标题：冒号前后是否并列/递进？不是则改题。',
     languages: ['zh', 'en'],
+    // v0.4：只扫 heading 段（GPT：冒号标题判断只针对标题，正文里的冒号句不算）
+    segments: ['heading'],
     evidence: { type: 'heuristic' },
   },
 ]
@@ -613,58 +624,190 @@ export function filterReport(report: AuditReport, minSeverity: Severity): AuditR
 // ---------------------------------------------------------------------------
 
 /**
- * v0.4 preprocessing 基础层（GPT 优先级最高）：剥离非 prose 内容，
- * 让规则只扫描真正的论文正文，References/code/math/URL 不再污染统计。
+ * v0.4 preprocessing：从"一串 replace"升级为 segment pipeline（GPT P2 规划）。
+ * 文档被切分为带类型的 Segment，规则声明自己扫描的 segment 类型——
+ * LLM 词表只扫 prose，colon-title 只扫 heading，references/code/math/table 默认忽略。
  */
+export type SegmentKind = 'prose' | 'heading' | 'reference' | 'code' | 'math' | 'table'
+
+export interface Segment {
+  kind: SegmentKind
+  /** 清洗后的文本（行内 code/math/URL/LaTeX 已剥离） */
+  text: string
+}
+
 export interface DocumentView {
   raw: string
-  /** 剥离 code fences / YAML frontmatter / LaTeX math / URLs / References 后的正文 */
+  segments: Segment[]
+  /** 兼容字段：所有 prose + heading 段拼接（规则默认扫描范围） */
   prose: string
   headings: string[]
   references: string
 }
 
-/** 简单 Markdown/LaTeX 预处理：返回 prose 视图 */
+/** 行内清理：剥离行内 code / LaTeX math / Markdown 链接（保留 anchor）/ URL / LaTeX 命令 */
+function cleanInline(t: string): string {
+  let s = t
+  s = s.replace(/`[^`\n]*`/g, ' ')
+  s = s.replace(/\$[^$\n]+\$/g, ' ')
+  s = s.replace(/\[([^\]]+)\]\(https?:\/\/[^)]*\)/g, '$1')
+  s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  s = s.replace(/https?:\/\/\S+/g, ' ')
+  s = s.replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1')
+  s = s.replace(/\\[a-zA-Z]+\s*/g, ' ')
+  return s
+}
+
+const REF_HEADING_RE =
+  /(?:^|\n)\s*(?:#{1,6}\s*)?(?:references|bibliography|参考文献)\s*:?\s*(?:\n|$)|\\begin\{thebibliography\}|\\section\*?\{References\}|\\section\*?\{Bibliography\}/i
+
+/** 块级分段器：识别 YAML/code fence/表格/标题/公式块/References/正文 */
 export function preprocess(text: string): DocumentView {
-  let t = text
-  // 1. YAML frontmatter（--- ... --- 开头）
-  t = t.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
-  // 2. code fences（``` ... ``` / ~~~ ... ~~~）
-  t = t.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, '')
-  // 3. 行内代码与 LaTeX 行内公式
-  t = t.replace(/`[^`\n]*`/g, ' ')
-  t = t.replace(/\$[^$\n]+\$/g, ' ')
-  // 4. LaTeX 块公式（$$...$$ / \[...\] / equation 环境）
-  t = t.replace(/\$\$[\s\S]*?\$\$/g, ' ')
-  t = t.replace(/\\\[[\s\S]*?\\\]/g, ' ')
-  // 5. Markdown 链接：先保留 anchor text（v0.3.3：顺序反了会导致 [text](url) 残留 "["）
-  t = t.replace(/\[([^\]]+)\]\(https?:\/\/[^)]*\)/g, '$1')
-  t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-  // 6. 裸 URLs
-  t = t.replace(/https?:\/\/\S+/g, ' ')
-  // 7. References / Bibliography 段截断（v0.3.3：必须放在 LaTeX 命令清理之前，
-  //    否则 \begin{thebibliography} 会被 \\[a-zA-Z]+\s* 提前吃掉）
-  const refMatch = t.match(
-    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:references|bibliography|参考文献)\s*:?\s*(?:\n|$)|\\begin\{thebibliography\}|\\section\*?\{References\}|\\section\*?\{Bibliography\}/i,
-  )
-  let references = ''
-  if (refMatch) {
-    const idx = refMatch.index ?? 0
-    references = t.slice(idx)
-    t = t.slice(0, idx)
-  }
-  // 8. LaTeX 命令（\cite{...} \ref{...} \textbf{...} 等，保留内容词）
-  t = t.replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1')
-  t = t.replace(/\\[a-zA-Z]+\s*/g, ' ')
+  const segments: Segment[] = []
+  const lines = text.split(/\r?\n/)
+  let i = 0
+  let inRefs = false
 
-  // 标题提取（Markdown # 或 LaTeX section）
-  const headings: string[] = []
-  for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\s{0,3}#{1,6}\s+(.+)$/)
-    if (m) headings.push(m[1].trim())
+  const flushProse = (buf: string[]): void => {
+    if (buf.length === 0) return
+    const raw = buf.join('\n')
+    const cleaned = cleanInline(raw)
+    // prose 段按空行再拆（保持段落粒度）
+    for (const para of cleaned.split(/\n{2,}/)) {
+      const p = para.trim()
+      if (p.length > 0) segments.push({ kind: 'prose', text: p })
+    }
   }
 
-  return { raw: text, prose: t, headings, references }
+  let buf: string[] = []
+
+  while (i < lines.length) {
+    const line = lines[i]
+    // References 段：一旦遇到 References 标题，后续全部归 reference
+    if (!inRefs && REF_HEADING_RE.test('\n' + line + '\n')) {
+      flushProse(buf); buf = []
+      inRefs = true
+      const rest = lines.slice(i).join('\n')
+      segments.push({ kind: 'reference', text: rest })
+      break
+    }
+    // YAML frontmatter（文件开头）
+    if (i === 0 && /^---\s*$/.test(line)) {
+      flushProse(buf); buf = []
+      const end = lines.findIndex((l, j) => j > i && /^---\s*$/.test(l))
+      if (end > 0) {
+        segments.push({ kind: 'code', text: lines.slice(i, end + 1).join('\n') })
+        i = end + 1
+        continue
+      }
+    }
+    // code fence
+    if (/^\s*(```|~~~)/.test(line)) {
+      flushProse(buf); buf = []
+      const fence = line.match(/^\s*(```|~~~)/)![1]
+      const end = lines.findIndex((l, j) => j > i && l.trim().startsWith(fence))
+      const endIdx = end > 0 ? end : lines.length - 1
+      segments.push({ kind: 'code', text: lines.slice(i, endIdx + 1).join('\n') })
+      i = endIdx + 1
+      continue
+    }
+    // Markdown 标题
+    const heading = line.match(/^\s{0,3}#{1,6}\s+(.+)$/)
+    if (heading) {
+      flushProse(buf); buf = []
+      segments.push({ kind: 'heading', text: cleanInline(heading[1].trim()) })
+      i += 1
+      continue
+    }
+    // LaTeX section 标题
+    const latexHeading = line.match(/^\s*\\section\*?\{([^}]+)\}/)
+    if (latexHeading) {
+      flushProse(buf); buf = []
+      segments.push({ kind: 'heading', text: cleanInline(latexHeading[1].trim()) })
+      i += 1
+      continue
+    }
+    // LaTeX 块公式（$$...$$ 单独行 或 equation 环境）
+    if (/^\s*\$\$/.test(line) || /^\s*\\begin\{equation/.test(line)) {
+      flushProse(buf); buf = []
+      const start = i
+      if (/^\s*\$\$/.test(line)) {
+        const end = lines.findIndex((l, j) => j > i && /^\s*\$\$/.test(l))
+        const endIdx = end > 0 ? end : lines.length - 1
+        segments.push({ kind: 'math', text: lines.slice(start, endIdx + 1).join('\n') })
+        i = endIdx + 1
+      } else {
+        const end = lines.findIndex((l, j) => j > i && /\\end\{equation/.test(l))
+        const endIdx = end > 0 ? end : lines.length - 1
+        segments.push({ kind: 'math', text: lines.slice(start, endIdx + 1).join('\n') })
+        i = endIdx + 1
+      }
+      continue
+    }
+    // Markdown 表格（当前行含 | 且下一行是分隔符 |---|）
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|—-]+\|?\s*$/.test(lines[i + 1])) {
+      flushProse(buf); buf = []
+      const start = i
+      while (i < lines.length && /^\s*\|/.test(lines[i])) i += 1
+      segments.push({ kind: 'table', text: lines.slice(start, i).join('\n') })
+      continue
+    }
+    // 普通行 → prose 缓冲
+    buf.push(line)
+    i += 1
+  }
+  flushProse(buf)
+
+  const headings = segments.filter((s) => s.kind === 'heading').map((s) => s.text)
+  const references = segments.filter((s) => s.kind === 'reference').map((s) => s.text).join('\n')
+  const prose = segments
+    .filter((s) => s.kind === 'prose' || s.kind === 'heading')
+    .map((s) => s.text)
+    .join('\n\n')
+
+  return { raw: text, segments, prose, headings, references }
+}
+
+/** 常见论文章节名（用于 section detection） */
+const SECTION_NAMES = [
+  'abstract', 'introduction', 'methods', 'methodology', 'materials and methods', 'results',
+  'discussion', 'conclusion', 'conclusions', 'limitations', 'related work',
+  '摘要', '引言', '方法', '材料与方法', '结果', '讨论', '结论', '局限性', '相关工作',
+]
+
+export interface Section {
+  name: string
+  text: string
+}
+
+/**
+ * v0.4 section detection：把 heading 段映射到章节，正文按章节归组。
+ * 用于 limitation-dispersal 等"跨章节分散"检测。
+ */
+export function detectSections(view: DocumentView): Section[] {
+  const sections: Section[] = []
+  let current = 'unknown'
+  let buf: string[] = []
+
+  const flush = () => {
+    if (buf.length > 0) {
+      sections.push({ name: current, text: buf.join('\n') })
+      buf = []
+    }
+  }
+
+  for (const seg of view.segments) {
+    if (seg.kind === 'heading') {
+      flush()
+      const lower = seg.text.toLowerCase()
+      const matched = SECTION_NAMES.find((s) => lower.includes(s))
+      current = matched ?? seg.text.slice(0, 40)
+    } else if (seg.kind === 'prose') {
+      buf.push(seg.text)
+    }
+  }
+  flush()
+  return sections
 }
 
 export interface AuditOptions {
@@ -680,13 +823,24 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
   const profile = opts?.profile ?? 'unknown'
   const maxParagraphs = opts?.maxParagraphs ?? 400
   // v0.4 preprocessing：默认剥离 references/code/math/URL，规则只扫 prose
-  const view = opts?.preprocess === false ? { raw: text, prose: text, headings: [], references: '' } : preprocess(text)
+  const view: DocumentView =
+    opts?.preprocess === false
+      ? { raw: text, prose: text, segments: [{ kind: 'prose', text }], headings: [], references: '' }
+      : preprocess(text)
   const scanText = view.prose
   const paragraphs = scanText
     .split(/\n{2,}|\r?\n\r?\n/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
     .slice(0, maxParagraphs)
+
+  // v0.4：按 segment 类型分组文本（stats 与规则共用同一来源）
+  const segTextByKind: Partial<Record<SegmentKind, string>> = {}
+  for (const seg of view.segments) {
+    const prev = segTextByKind[seg.kind] ?? ''
+    segTextByKind[seg.kind] = prev ? prev + '\n\n' + seg.text : seg.text
+  }
+  const headingText = segTextByKind.heading ?? ''
 
   const { englishWords, cjkChars } = countLexicalUnits(scanText)
   const words = englishWords + cjkChars
@@ -696,7 +850,8 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     cjkChars,
     // v0.3.1：统计与规则同一 source of truth（GPT：杜绝 counter 漂移）
     emDashCount: countRuleById('em-dash-density', scanText),
-    colonTitleCount: countRuleById('colon-title', scanText),
+    // v0.4：colon-title 只统计 heading 段（与规则 segments 声明一致）
+    colonTitleCount: countRuleById('colon-title', headingText),
     notXbutYCount: countRuleById('not-x-but-y-zh', scanText) + countRuleById('not-x-but-y-en', scanText),
     ratherThanCount: countRuleById('rather-than-heavy', scanText),
     absolutistCount: countRuleById('absolutist-def', scanText),
@@ -709,17 +864,52 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
 
   const hits: Hit[] = []
 
+  // v0.4：section-based 规则（如 limitation-dispersal）——先做跨章节检测
+  const sections = detectSections(view)
+
   for (const rule of RULES) {
     // 文档类型过滤
     if (!ruleMatchesProfile(rule, profile)) continue
     // 语言过滤：无法可靠检测语言时全部执行（规则本身多为双语正则）
 
-    // 密度规则（全文统计级）——v0.3.3 P0 修复：必须用 scanText（preprocessing 后的 prose），
-    // 否则 References/code/math/URL 里的词仍会污染全文计数与分母
+    // v0.4 section-based 规则：统计命中章节数，≥ threshold 才报
+    if (rule.sectionBased) {
+      const threshold = rule.sectionThreshold ?? 3
+      const re = new RegExp(rule.pattern.source, rule.pattern.flags.includes('g') ? rule.pattern.flags : rule.pattern.flags + 'g')
+      const hitSections = new Map<string, number>()
+      for (const sec of sections) {
+        const m = sec.text.match(re)
+        if (m && m.length > 0) hitSections.set(sec.name, (hitSections.get(sec.name) ?? 0) + m.length)
+      }
+      if (hitSections.size >= threshold) {
+        const detail = [...hitSections.entries()].map(([n, c]) => `${n}×${c}`).join(', ')
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: -1,
+          snippet: `（跨章节统计）局限类表述出现在 ${hitSections.size} 个章节：${detail}`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+        })
+      }
+      continue
+    }
+
+    // segment 过滤（v0.4）：规则只扫自己声明的类型，缺省 prose
+    const ruleSegs = rule.segments ?? ['prose']
+    const ruleText = ruleSegs.map((k) => segTextByKind[k] ?? '').filter((s) => s.length > 0).join('\n\n')
+    if (!ruleText.trim()) continue
+
+    // 密度规则（全文统计级）——v0.3.3 P0：用 segment 过滤后的文本；v0.4：只统计声明类型
     if (rule.threshold) {
-      const count = countRuleOccurrences(rule, scanText)
+      const count = countRuleOccurrences(rule, ruleText)
       const unit = rule.threshold.unit ?? 'word'
-      const denominator = denominatorForRule(scanText, rule, unit)
+      const denominator = denominatorForRule(ruleText, rule, unit)
       const rate = denominator > 0 ? (count / denominator) * 1000 : 0
       const okCount = rule.threshold.minCount === undefined || count >= rule.threshold.minCount
       const okRate = rule.threshold.perK === undefined || rate >= rule.threshold.perK
@@ -742,11 +932,16 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
       continue
     }
 
-    // 段落级规则
+    // 段落级规则：只扫描规则声明的 segment 类型
+    const ruleParagraphs = ruleText
+      .split(/\n{2,}|\r?\n\r?\n/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
+      .slice(0, maxParagraphs)
     const maxHits = rule.maxHits ?? 3
     let found = 0
-    for (let i = 0; i < paragraphs.length && found < maxHits; i++) {
-      const para = paragraphs[i]
+    for (let i = 0; i < ruleParagraphs.length && found < maxHits; i++) {
+      const para = ruleParagraphs[i]
       const m = rule.pattern.exec(para)
       if (!m) continue
       // 命中位置局部上下文（v0.3.1 match-local）：只看当前 match ±window，不再整段排除

@@ -330,6 +330,83 @@ console.log('=== 18. v0.3.3 Markdown link：保留 anchor text、URL 不进分�
   check('markdown link anchor words counted in prose', r.stats.englishWords >= 7, `words=${r.stats.englishWords}`)
 }
 
+console.log('=== 19. v0.4 segment pipeline：规则只扫声明的 segment 类型 ===')
+{
+  const doc = [
+    '# Introduction',
+    '',
+    'The model is described in this paper.',
+    '',
+    '# Methods: Overview and Setup',
+    'We use the proposed approach.',
+    '',
+    '# Results and Discussion',
+    'The outcome is significant.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  // colon-title 只扫 heading：'# Methods: Overview and Setup' 是冒号标题 → 1 个 heading 含冒号
+  // 但 minCount=3 阈值不满足 → 不报；验证 stats.colonTitleCount 只计 heading
+  check('colon-title stats counts headings only', r.stats.colonTitleCount === 1, `colonTitleCount=${r.stats.colonTitleCount}`)
+  // 正文中的冒号句不应被 colon-title 统计
+  const doc2 = [
+    '# Title',
+    '',
+    'The method: it works well in practice. Another colon: still prose.',
+  ].join('\n')
+  const r2 = auditText(doc2, { profile: 'manuscript' })
+  check('colon-title ignores prose colons', r2.stats.colonTitleCount === 0, `colonTitleCount=${r2.stats.colonTitleCount}`)
+}
+
+console.log('=== 20. v0.4 section detection + limitation-dispersal 跨章节 ===')
+{
+  // 局限分散在 ≥3 章节 → 报
+  const doc = [
+    '# Introduction',
+    'The limitations of prior work are known.',
+    '# Methods',
+    'This method has limitations in generalization.',
+    '# Results',
+    'Results show limited applicability.',
+    '# Discussion',
+    'The study has several limitations as discussed.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  check('limitation-dispersal TP (>=3 sections)', hasRule(r, 'limitation-dispersal'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+
+  // 局限只在 Discussion → 不报（ICMJE 正当）
+  const ok = auditText(
+    [
+      '# Introduction',
+      'Prior work is reviewed.',
+      '# Discussion',
+      'This study has several limitations. First, sample size. Second, single lab. These limitations should be considered.',
+    ].join('\n'),
+    { profile: 'manuscript' },
+  )
+  check('limitation-dispersal TN (discussion only, ICMJE-appropriate)', !hasRule(ok, 'limitation-dispersal'), JSON.stringify(ok.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 21. v0.4 segment 类型：code/math/table 不进入 prose ===')
+{
+  const doc = [
+    'The method works.',
+    '',
+    '| col1 | col2 |',
+    '|------|------|',
+    '| a    | b    |',
+    '',
+    '$$E = mc^2$$',
+    '',
+    '```python',
+    'x = 1',
+    '```',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  // table/math/code 不产生 prose 命中；统计只含 'The method works.'
+  check('table/math/code excluded from prose words', r.stats.englishWords <= 5, `words=${r.stats.englishWords}`)
+  check('table/math/code no false hits', r.summary.total === 0, JSON.stringify(r.hits.map((h) => h.ruleId)))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

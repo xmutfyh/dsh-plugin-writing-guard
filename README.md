@@ -62,12 +62,16 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 例如 rather than：≥4 次且 ≥1.0/千词；破折号：≥5 次且 ≥0.5/千词；LLM 高频词：≥2 次且 ≥0.4/千词；
 中文套话：≥8 次且 ≥2.0/千字。500 字摘要和 12000 字全文不再用同一阈值。
 
-## preprocessing（v0.3.3，默认开启）
+## preprocessing（v0.4 segment pipeline，默认开启）
 
-审计前自动剥离非正文内容：YAML frontmatter、code fences、行内代码、LaTeX 行内/块公式、
-Markdown 链接（保留 anchor text）、裸 URLs、LaTeX 命令，并截断 References/Bibliography
-（支持 `# References`、`References:`、`\section{References}`、`\begin{thebibliography}`）。
-规则只扫描 prose——References/code/math/URL 不再进入命中或密度分母。
+文档先被切分为**带类型的 segment**（prose/heading/reference/code/math/table），每条规则声明自己扫描的类型：
+- LLM 词表、修订残留等 → `prose`
+- 冒号标题 → `heading`（正文里的冒号句不算）
+- References/code/math/table → 默认忽略
+
+同时支持 **section detection**（Introduction/Methods/Results/Discussion/Conclusion…）：
+`limitation-dispersal` 从"词频"升级为"跨章节分散"——同一局限散落在 ≥3 个章节才提示，
+仅在 Discussion 正当陈述（ICMJE 要求）不报警。
 
 ## confidence / evidence（v0.3）
 
@@ -104,7 +108,7 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 50 项 TP/TN/边界用例（无测试框架依赖）
+npm test   # 自动先 build 再跑 56 项 TP/TN/边界用例（无测试框架依赖）
 ```
 
 ## 开发

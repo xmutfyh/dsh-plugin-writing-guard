@@ -62,14 +62,18 @@ E.g. rather than: ≥4 and ≥1.0/1k; em-dash: ≥5 and ≥0.5/1k; LLM words: �
 ≥0.4/1k; Chinese connectives: ≥8 and ≥2.0/1k chars. A 500-word abstract and a
 12,000-word full paper no longer share one absolute threshold.
 
-## Preprocessing (v0.3.3, on by default)
+## Preprocessing (v0.4 segment pipeline, on by default)
 
-Before auditing, non-prose content is stripped: YAML frontmatter, code fences,
-inline code, LaTeX inline/block math, Markdown links (anchor text kept), bare
-URLs, LaTeX commands; the References/Bibliography section is cut (`# References`,
-`References:`, `\section{References}`, `\begin{thebibliography}` all supported).
-Rules scan prose only — references/code/math/URLs never enter hits or density
-denominators.
+Documents are split into **typed segments** (prose/heading/reference/code/math/
+table); each rule declares the segment kinds it scans:
+- LLM vocabulary, revision residue, etc. → `prose`
+- colon-title → `heading` (colons inside prose paragraphs are not counted)
+- references/code/math/table → ignored by default
+
+**Section detection** (Introduction/Methods/Results/Discussion/Conclusion…):
+`limitation-dispersal` was upgraded from word frequency to **cross-section
+dispersion** — flagged only when the same limitation appears in ≥3 sections;
+an ICMJE-appropriate limitations statement confined to Discussion is not flagged.
 
 ## Confidence & evidence (v0.3)
 
@@ -108,7 +112,7 @@ Configure in `cordis.patch.yml`:
 ## Tests
 
 ```sh
-npm test   # builds first, then 50 TP/TN/edge cases, no framework needed
+npm test   # builds first, then 56 TP/TN/edge cases, no framework needed
 ```
 
 ## Development
