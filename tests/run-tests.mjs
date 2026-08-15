@@ -4,7 +4,7 @@
  * 目标：每条核心规则至少有一个 true-positive 和一个 true-negative 断言。
  * 运行：node tests/run-tests.mjs
  */
-import { auditText, detectDocumentProfile, filterReport } from '../lib/rules.js'
+import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints } from '../lib/rules.js'
 
 let pass = 0
 let fail = 0
@@ -405,6 +405,35 @@ console.log('=== 21. v0.4 segment 类型：code/math/table 不进入 prose ===')
   // table/math/code 不产生 prose 命中；统计只含 'The method works.'
   check('table/math/code excluded from prose words', r.stats.englishWords <= 5, `words=${r.stats.englishWords}`)
   check('table/math/code no false hits', r.summary.total === 0, JSON.stringify(r.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 22. v0.5 incremental lint：指纹 + 增量 diff ===')
+{
+  // 指纹稳定：同一条问题在不同段落位置（编辑导致行号变化）指纹一致
+  const a = auditText('The revised model uses ΔP.', { profile: 'manuscript' })
+  const b = auditText('Intro text.\n\nThe revised model uses ΔP.', { profile: 'manuscript' })
+  const fa = a.hits.find((h) => h.ruleId === 'revised-family')
+  const fb = b.hits.find((h) => h.ruleId === 'revised-family')
+  check('fingerprint stable across paragraph shifts', fa && fb && hitFingerprint(fa) === hitFingerprint(fb), `a=${fa && hitFingerprint(fa)} b=${fb && hitFingerprint(fb)}`)
+
+  // diff：修复一项 → added 1 / resolved 1 / remaining 1
+  const v1 = auditText('The revised model uses ΔP. This study has limitations in generalization.', { profile: 'manuscript' })
+  const prev = new Set(v1.hits.map((h) => hitFingerprint(h)))
+  const v2 = auditText('The model uses ΔP. We do not claim superiority. This study has limitations in generalization.', { profile: 'manuscript' })
+  const diff = diffAudit(prev, v2.hits)
+  check('diff: added detected', diff.added.some((h) => h.ruleId === 'we-do-not-claim'), JSON.stringify(diff.added.map((h) => h.ruleId)))
+  check('diff: resolved counted', diff.resolved.length === 1, `resolved=${diff.resolved.length}`)
+  check('diff: remaining correct', diff.remaining === 1, `remaining=${diff.remaining}`)
+
+  // 无变化 → 0/0（不注入）
+  const diff0 = diffAudit(prev, v1.hits)
+  check('diff: no-change is empty', diff0.added.length === 0 && diff0.resolved.length === 0)
+
+  // 序列化往返
+  const ser = serializeFingerprints(prev)
+  const de = deserializeFingerprints(ser)
+  check('serialize/deserialize roundtrip', de.size === prev.size && [...de].every((x) => prev.has(x)))
+  check('deserialize rejects non-array', deserializeFingerprints('nope').size === 0)
 }
 
 console.log('')

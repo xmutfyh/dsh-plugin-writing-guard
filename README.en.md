@@ -96,23 +96,38 @@ Listens on `tools/post-execute`: after `write`/`edit` touches a paper-like file
 it runs the audit automatically (profile auto-detected) and injects high-severity
 findings as `additionalContexts` for the model's next request.
 
+**v0.5 incremental lint**: per-file audit state is persisted
+(`~/.dsh/plugins/dsh-plugin-writing-guard/state.json`); each write injects only
+the **delta**:
+
+```text
+1 new / 4 resolved / 8 remaining
+```
+
+- no change → nothing injected (the same issues are not re-fed to the agent)
+- only resolved → short confirmation (does not consume the injection budget)
+- only **new** issues are listed with suggestions; run `writing_audit` manually
+  for the full report
+
 Configure in `cordis.patch.yml`:
 
 ```yaml
 - id: dsh-plugin-writing-guard
   config:
     autoAuditOnWrite: true
-    autoAuditMinSeverity: high
+    mode: conservative        # conservative|balanced|strict (default conservative=high)
+    autoAuditMinSeverity: high   # explicit value overrides mode
     maxAutoInjectPerTurn: 2
     verboseByDefault: false
     autoBrief: false
     projectResidueTerms: []   # project-internal terms appended to defaults
+    stateFile: ''             # incremental state path (default ~/.dsh/plugins/...)
 ```
 
 ## Tests
 
 ```sh
-npm test   # builds first, then 56 TP/TN/edge cases, no framework needed
+npm test   # builds first, then 63 TP/TN/edge cases, no framework needed
 ```
 
 ## Development

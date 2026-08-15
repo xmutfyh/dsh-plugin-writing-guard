@@ -86,11 +86,22 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 | `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose；返回按严重度+置信度排序的问题清单与全文统计 |
 | `writing_rules` | 返回写作纪律速查（含 profile 与密度说明） |
 
-## 自动审计（默认开启）
+## 自动审计（默认开启，v0.5 增量模式）
 
 插件监听 `tools/post-execute`：`write`/`edit` 写入**论文类文件**（.md/.tex/.txt，路径含
 manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manuscript/ 等知识库目录）时
-自动审计（自动检测文档 profile），高危问题经 `additionalContexts` 注入模型下一条请求。
+自动审计（自动检测文档 profile），结果经 `additionalContexts` 注入模型下一条请求。
+
+**v0.5 incremental lint**：审计状态按文件持久化（`~/.dsh/plugins/dsh-plugin-writing-guard/state.json`），
+每次写入只注入**增量**：
+
+```text
+新增 1 项 / 已解决 4 项 / 仍存在 8 项
+```
+
+- 无变化 → 不注入（不再把同样的问题反复灌给 agent）
+- 只有已解决 → 简短确认（不占注入次数）
+- 只列出**新增项**详情 + 建议；完整清单仍可用 `writing_audit` 手动获取
 
 配置（web profile `cordis.patch.yml`）：
 
@@ -98,17 +109,19 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
 - id: dsh-plugin-writing-guard
   config:
     autoAuditOnWrite: true          # 论文文件写入后自动审计（默认 true）
-    autoAuditMinSeverity: high      # high|medium|low
+    mode: conservative              # conservative|balanced|strict（覆盖 minSeverity，默认 conservative=high）
+    autoAuditMinSeverity: high      # high|medium|low（显式设置优先于 mode）
     maxAutoInjectPerTurn: 2         # 每轮最多自动注入次数
     verboseByDefault: false
     autoBrief: false
     projectResidueTerms: []         # 项目内部词表（追加到默认词表，命中按 medium 报）
+    stateFile: ''                   # 增量状态文件（缺省 ~/.dsh/plugins/dsh-plugin-writing-guard/state.json）
 ```
 
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 56 项 TP/TN/边界用例（无测试框架依赖）
+npm test   # 自动先 build 再跑 63 项 TP/TN/边界用例（无测试框架依赖）
 ```
 
 ## 开发

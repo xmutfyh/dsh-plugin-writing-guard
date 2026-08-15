@@ -620,6 +620,51 @@ export function filterReport(report: AuditReport, minSeverity: Severity): AuditR
 }
 
 // ---------------------------------------------------------------------------
+// v0.5 incremental lint：指纹与增量 diff（GPT 规划——"新增 1 / 解决 4 / 仍存在 8"）
+// ---------------------------------------------------------------------------
+
+/** 稳定指纹：ruleId + 规范化 snippet（去空白/截断；不含段落索引——编辑后行号会变） */
+export function hitFingerprint(h: Hit): string {
+  const snippet = h.snippet.replace(/\s+/g, ' ').trim().slice(0, 120)
+  return `${h.ruleId}::${snippet}`
+}
+
+export interface AuditDiff {
+  added: Hit[]          // 新出现的问题
+  resolved: string[]    // 已解决的指纹（只给摘要，不保留旧 hit 细节）
+  remaining: number     // 仍存在的问题数
+  previousTotal: number // 上一次问题数
+  currentTotal: number  // 当前问题数
+}
+
+/** 对比上一次指纹集合与当前 hits，返回增量（GPT：自动模式只告诉 agent 新增/解决） */
+export function diffAudit(previous: Set<string>, current: Hit[]): AuditDiff {
+  const currentFps = new Set(current.map((h) => hitFingerprint(h)))
+  const added = current.filter((h) => !previous.has(hitFingerprint(h)))
+  const resolved: string[] = []
+  for (const fp of previous) {
+    if (!currentFps.has(fp)) resolved.push(fp)
+  }
+  return {
+    added,
+    resolved,
+    remaining: currentFps.size,
+    previousTotal: previous.size,
+    currentTotal: currentFps.size,
+  }
+}
+
+/** 序列化/反序列化指纹集合（用于持久化到磁盘） */
+export function serializeFingerprints(fps: Set<string>): string[] {
+  return [...fps]
+}
+
+export function deserializeFingerprints(arr: unknown): Set<string> {
+  if (!Array.isArray(arr)) return new Set()
+  return new Set(arr.filter((x): x is string => typeof x === 'string'))
+}
+
+// ---------------------------------------------------------------------------
 // 主审计
 // ---------------------------------------------------------------------------
 
