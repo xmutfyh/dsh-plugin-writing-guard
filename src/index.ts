@@ -77,8 +77,15 @@ const DEFAULT_PROJECT_TERMS = ['source_map', 'reader 锚点', 'iteration_log', '
 
 // ---------- v0.5 incremental lint 状态持久化 ----------
 
+/** 指纹算法版本：指纹规则变化时递增，旧 state 清空重建（防止升级后制造假 resolved+added） */
+const FINGERPRINT_VERSION = 2
+/** 插件版本（用于 state 标记） */
+const PLUGIN_VERSION = '0.5.1'
+
 interface StateFileShape {
-  version: 1
+  schemaVersion: number
+  pluginVersion: string
+  fingerprintVersion: number
   files: Record<string, string[]>
 }
 
@@ -86,6 +93,8 @@ async function loadState(stateFile: string): Promise<Map<string, Set<string>>> {
   try {
     const raw = await fs.readFile(stateFile, 'utf8')
     const data = JSON.parse(raw) as StateFileShape
+    // fingerprint 版本不兼容 → 清空基线（GPT 预防性建议：不制造假变化）
+    if (data.fingerprintVersion !== FINGERPRINT_VERSION) return new Map()
     const map = new Map<string, Set<string>>()
     for (const [file, fps] of Object.entries(data.files ?? {})) {
       map.set(file, deserializeFingerprints(fps))
@@ -96,14 +105,27 @@ async function loadState(stateFile: string): Promise<Map<string, Set<string>>> {
   }
 }
 
-async function saveState(stateFile: string, state: Map<string, Set<string>>): Promise<void> {
-  const files: Record<string, string[]> = {}
-  for (const [file, fps] of state) {
-    files[file] = serializeFingerprints(fps)
-  }
-  const data: StateFileShape = { version: 1, files }
-  await fs.mkdir(path.dirname(stateFile), { recursive: true })
-  await fs.writeFile(stateFile, JSON.stringify(data, null, 2), 'utf8')
+/** v0.5.1：save 串行排队 + atomic write（tmp → rename），避免并发覆盖与中途写坏 */
+let saveQueue: Promise<void> = Promise.resolve()
+
+function queueSave(stateFile: string, state: Map<string, Set<string>>): void {
+  saveQueue = saveQueue.then(async () => {
+    const files: Record<string, string[]> = {}
+    for (const [file, fps] of state) {
+      files[file] = serializeFingerprints(fps)
+    }
+    const data: StateFileShape = {
+      schemaVersion: 1,
+      pluginVersion: PLUGIN_VERSION,
+      fingerprintVersion: FINGERPRINT_VERSION,
+      files,
+    }
+    const dir = path.dirname(stateFile)
+    await fs.mkdir(dir, { recursive: true })
+    const tmp = stateFile + '.tmp'
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
+    await fs.rename(tmp, stateFile)
+  }).catch(() => {})
 }
 
 /** 从文件读取文本（.txt/.md/.markdown 直接读；.docx 请先经 anydoc 转 Markdown） */
@@ -162,7 +184,10 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     ? MODE_MIN_SEVERITY[cfg.mode]
     : cfg.autoAuditMinSeverity
   // v0.5：增量状态持久化（缺省 ~/.dsh/plugins/dsh-plugin-writing-guard/state.json）
-  const stateFile = cfg.stateFile ?? path.join(os.homedir(), '.dsh', 'plugins', 'dsh-plugin-writing-guard', 'state.json')
+  // v0.5.1：stateFile 空串/空白 → 用默认路径（GPT P1：'' ?? default 仍是 ''，会让持久化静默失效）
+  const stateFile = cfg.stateFile?.trim()
+    ? path.resolve(cfg.stateFile)
+    : path.join(os.homedir(), '.dsh', 'plugins', 'dsh-plugin-writing-guard', 'state.json')
   const statePromise = loadState(stateFile).catch(() => new Map<string, Set<string>>())
 
   ctx.tools.register(defineTool({
@@ -172,7 +197,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       '主张校准（we do not claim/本文并非要证明…）、修辞模式（不是X而是Y/rather than/三连排比/绝对化）、' +
       'LLM 关联词（delve/tapestry/过渡词堆叠/中文套话）、学术文体与格式（抽象副词/破折号密度/冒号标题）。' +
       '可指定 profile（manuscript/rebuttal/cover_letter/review/notes）区分文档类型——rebuttal 中 "as requested" 不报警。' +
-      '频率类规则按密度（次/千词）计算。输入 text 或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。',
+      '频率类规则按密度计算（英文按词、中文按字，每千语言单位）。输入 text 或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。',
     parameters: {
       text: { type: 'string', description: '要检查的文本内容（与 filePath 二选一）' },
       filePath: { type: 'string', description: '要检查的文本文件路径（.txt/.md；二选一）' },
@@ -207,7 +232,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.tools.register(defineTool({
     name: 'writing_rules',
     description:
-      '返回论文写作纪律速查清单（dsh-plugin-writing-guard v0.3）：修改过程残留、主张校准、修辞模式、LLM 关联词、' +
+      '返回论文写作纪律速查清单（dsh-plugin-writing-guard v0.5.1）：修改过程残留、主张校准、修辞模式、LLM 关联词、' +
       '学术文体与格式、发布会原则与自查项（含文档类型 profile 与密度规则说明）。' +
       '写作/修改任何论文段落前可先调用本工具加载纪律，写完后用 writing_audit 复查。' +
       '插件也会在论文文件被写入后自动审计（autoAuditOnWrite）。',
@@ -241,11 +266,6 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         const agent = (exec as { agent?: { id?: string } }).agent
         if (!agent || typeof agent.id !== 'string') return decision
 
-        // 每轮注入次数限制
-        const turn = (exec as { turn?: number }).turn ?? -1
-        const injState = injectCounts.get(agent.id)
-        if (injState && injState.turn === turn && injState.count >= cfg.maxAutoInjectPerTurn) return decision
-
         // 只审计论文类文件
         if (!isPaperFile(target, (agent as { session?: { header?: { cwd?: string } } }).session?.header?.cwd)) return decision
 
@@ -265,27 +285,31 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         const currentFps = new Set(filtered.hits.map((h) => hitFingerprint(h)))
         const diff: AuditDiff = diffAudit(prevFps, filtered.hits)
 
-        // 更新持久化状态（无论是否注入）
+        // v0.5.1：cap 只限制 notification，不限制 tracking（GPT P1）——
+        // 无论是否达到注入上限，都先更新持久化状态
         auditState.set(target, currentFps)
-        void saveState(stateFile, auditState).catch(() => {})
+        queueSave(stateFile, auditState)
 
         // 无变化：不注入（GPT：不要每次把同样的问题重新灌进 agent）
         if (diff.added.length === 0 && diff.resolved.length === 0) return decision
-        // 只有解决、无新增：简短致谢式提示（不占注入次数）
+
+        // v0.5.1：resolved-only 不即时通知（GPT 最安静方案）——等下次有 added 时一起显示；
+        // 只有"全部清零"这一种情况单独确认一次
         if (diff.added.length === 0) {
-          const resolvedText = [
-            `【dsh-plugin-writing-guard】"${target}" 已解决 ${diff.resolved.length} 项写作纪律问题 ✅（仍存在 ${diff.remaining} 项）。`,
-            diff.remaining > 0 ? '剩余问题可在下一轮继续处理（如需完整清单请运行 writing_audit）。' : '全部清零，无需继续处理。',
-          ].join('\n')
-          const notice = createUserMessage({
-            content: [{ type: 'text', text: resolvedText }],
-            source: { kind: 'plugin', plugin: name },
-          })
-          return {
-            ...decision,
-            additionalContexts: [...(decision.additionalContexts ?? []), notice],
+          if (diff.remaining === 0) {
+            const notice = createUserMessage({
+              content: [{ type: 'text', text: `【dsh-plugin-writing-guard】"${target}" 写作纪律问题已全部清零 ✅` }],
+              source: { kind: 'plugin', plugin: name },
+            })
+            return { ...decision, additionalContexts: [...(decision.additionalContexts ?? []), notice] }
           }
+          return decision // 部分解决、无新增：安静等待下次 added 汇总
         }
+
+        // 每轮注入次数限制（只限制 notification）
+        const turn = (exec as { turn?: number }).turn ?? -1
+        const injState = injectCounts.get(agent.id)
+        if (injState && injState.turn === turn && injState.count >= cfg.maxAutoInjectPerTurn) return decision
 
         const nextCount = (injState && injState.turn === turn ? injState.count : 0) + 1
         injectCounts.set(agent.id, { turn, count: nextCount })

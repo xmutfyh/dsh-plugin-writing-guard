@@ -105,7 +105,8 @@ the **delta**:
 ```
 
 - no change → nothing injected (the same issues are not re-fed to the agent)
-- only resolved → short confirmation (does not consume the injection budget)
+- only resolved → no immediate notice (batched with the next "added" summary;
+  a single confirmation when everything is cleared)
 - only **new** issues are listed with suggestions; run `writing_audit` manually
   for the full report
 
@@ -121,13 +122,13 @@ Configure in `cordis.patch.yml`:
     verboseByDefault: false
     autoBrief: false
     projectResidueTerms: []   # project-internal terms appended to defaults
-    stateFile: ''             # incremental state path (default ~/.dsh/plugins/...)
+    # stateFile: leave unset (default ~/.dsh/plugins/dsh-plugin-writing-guard/state.json); never set ''
 ```
 
 ## Tests
 
 ```sh
-npm test   # builds first, then 63 TP/TN/edge cases, no framework needed
+npm test   # builds first, then 68 TP/TN/edge cases, no framework needed
 ```
 
 ## Development

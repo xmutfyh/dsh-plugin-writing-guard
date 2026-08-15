@@ -100,7 +100,7 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
 ```
 
 - 无变化 → 不注入（不再把同样的问题反复灌给 agent）
-- 只有已解决 → 简短确认（不占注入次数）
+- 只有已解决 → 不即时提示（等下次新增时一起汇总；全部清零时单独确认一次）
 - 只列出**新增项**详情 + 建议；完整清单仍可用 `writing_audit` 手动获取
 
 配置（web profile `cordis.patch.yml`）：
@@ -115,13 +115,13 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
     verboseByDefault: false
     autoBrief: false
     projectResidueTerms: []         # 项目内部词表（追加到默认词表，命中按 medium 报）
-    stateFile: ''                   # 增量状态文件（缺省 ~/.dsh/plugins/dsh-plugin-writing-guard/state.json）
+    # stateFile 缺省即可（~/.dsh/plugins/dsh-plugin-writing-guard/state.json）；勿配空串 ''
 ```
 
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 63 项 TP/TN/边界用例（无测试框架依赖）
+npm test   # 自动先 build 再跑 68 项 TP/TN/边界用例（无测试框架依赖）
 ```
 
 ## 开发

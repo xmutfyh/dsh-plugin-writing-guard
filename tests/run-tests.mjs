@@ -357,7 +357,7 @@ console.log('=== 19. v0.4 segment pipeline：规则只扫声明的 segment 类�
   check('colon-title ignores prose colons', r2.stats.colonTitleCount === 0, `colonTitleCount=${r2.stats.colonTitleCount}`)
 }
 
-console.log('=== 20. v0.4 section detection + limitation-dispersal 跨章节 ===')
+console.log('=== 20. v0.4 section detection + limitations-across-sections 跨章节 ===')
 {
   // 局限分散在 ≥3 章节 → 报
   const doc = [
@@ -371,7 +371,7 @@ console.log('=== 20. v0.4 section detection + limitation-dispersal 跨章节 ===
     'The study has several limitations as discussed.',
   ].join('\n')
   const r = auditText(doc, { profile: 'manuscript' })
-  check('limitation-dispersal TP (>=3 sections)', hasRule(r, 'limitation-dispersal'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+  check('limitations-across-sections TP (>=3 sections)', hasRule(r, 'limitations-across-sections'), JSON.stringify(r.hits.map((h) => h.ruleId)))
 
   // 局限只在 Discussion → 不报（ICMJE 正当）
   const ok = auditText(
@@ -383,7 +383,7 @@ console.log('=== 20. v0.4 section detection + limitation-dispersal 跨章节 ===
     ].join('\n'),
     { profile: 'manuscript' },
   )
-  check('limitation-dispersal TN (discussion only, ICMJE-appropriate)', !hasRule(ok, 'limitation-dispersal'), JSON.stringify(ok.hits.map((h) => h.ruleId)))
+  check('limitations-across-sections TN (discussion only, ICMJE-appropriate)', !hasRule(ok, 'limitations-across-sections'), JSON.stringify(ok.hits.map((h) => h.ruleId)))
 }
 
 console.log('=== 21. v0.4 segment 类型：code/math/table 不进入 prose ===')
@@ -434,6 +434,67 @@ console.log('=== 22. v0.5 incremental lint：指纹 + 增量 diff ===')
   const de = deserializeFingerprints(ser)
   check('serialize/deserialize roundtrip', de.size === prev.size && [...de].every((x) => prev.has(x)))
   check('deserialize rejects non-array', deserializeFingerprints('nope').size === 0)
+}
+
+console.log('=== 23. v0.5.1 P0：单行 $$...$$ 不吞正文 ===')
+{
+  // GPT：$$E = mc^2$$ 单行闭合后，后续正文必须仍被扫描
+  const doc = [
+    '$$E = mc^2$$',
+    '',
+    'The revised manuscript now includes additional experiments.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  check('single-line $$ closed, following prose still scanned', hasRule(r, 'revised-family'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 24. v0.5.1 P0：density fingerprint 稳定（不随分母变化）===')
+{
+  // density hit 指纹 = aggregate::ruleId：加一段正常文字改变分母后，指纹不变
+  const v1 = auditText(
+    'We delve into the tapestry. This is a testament. The realm is broad. The work is a cornerstone of the paradigm. The approach leverages the method. The model harnesses the data. The result showcases the value. The study navigates the field.',
+    { profile: 'manuscript' },
+  )
+  const fp1 = new Set(v1.hits.map((h) => hitFingerprint(h)))
+  const v2 = auditText(
+    'We delve into the tapestry. This is a testament. The realm is broad. The work is a cornerstone of the paradigm. The approach leverages the method. The model harnesses the data. The result showcases the value. The study navigates the field.' +
+      ' Additional normal methods text that increases the denominator without adding new issues. The experiment was repeated three times with consistent results. All measurements were recorded and analyzed.',
+    { profile: 'manuscript' },
+  )
+  const fp2 = new Set(v2.hits.map((h) => hitFingerprint(h)))
+  // 分母变化不产生 resolved+added（指纹应完全一致）
+  check('density fingerprint stable across denominator change', fp1.size === fp2.size && [...fp1].every((x) => fp2.has(x)),
+    `fp1=${[...fp1].join('|')} fp2=${[...fp2].join('|')}`)
+}
+
+console.log('=== 25. v0.5.1 heading hierarchy：Discussion 子标题不拆成多个 section ===')
+{
+  const doc = [
+    '# Discussion',
+    '',
+    '## Sample size',
+    'This limitation affects precision.',
+    '',
+    '## External validity',
+    'Another limitation is scope.',
+    '',
+    '## Measurement',
+    'A limitation in measurement exists.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  // 全部属于 Discussion 一个顶层章节 → 不报（GPT：这正是 README 说不该报警的合理写法）
+  check('subheadings stay under top-level section (no false positive)', !hasRule(r, 'limitations-across-sections'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 26. v0.5.1 LaTeX 引用命令整体删除（\cite 的 key 不进 prose）===')
+{
+  const doc = [
+    'The method \\cite{smith-revised-2025} and \\ref{revised-model} are described. \\textbf{important result} is shown.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  // \cite{smith-revised-2025} 里的 "revised" 是 citation key，不应命中；\textbf 的内容保留
+  check('latex cite/ref keys stripped (no revised hit)', !hasRule(r, 'revised-family'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+  check('latex textbf content kept (important result)', /important result/.test(r.stats.englishWords > 0 ? 'x' : '') || r.stats.englishWords >= 8, `words=${r.stats.englishWords}`)
 }
 
 console.log('')
