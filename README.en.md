@@ -53,12 +53,23 @@ Pass `profile` to `writing_audit`, or it is auto-detected from the file path.
 | Academic style | "we believe/think", hedges, abstract adverbs; "significantly" only prompts review of non-statistical uses |
 | Formatting | em-dash density (range en-dashes excluded), colon-title abuse |
 
-## Density thresholds (v0.3)
+## Density thresholds (v0.3.3)
 
-Frequency rules use **occurrences per 1,000 words**: flag only when
-`count >= minCount AND count/words*1000 >= perKWords`. E.g. rather than: ≥4 and
-≥1.0/1k; em-dash: ≥5 and ≥0.5/1k; LLM words: ≥2 and ≥0.4/1k. A 500-word abstract
-and a 12,000-word full paper no longer share one absolute threshold.
+Frequency rules use **per-1,000 language units**: English rules use the English
+word count, Chinese rules use CJK char count (bilingual files do not dilute each
+other), with a **double gate**: `count >= minCount AND count/denominator*1000 >= perK`.
+E.g. rather than: ≥4 and ≥1.0/1k; em-dash: ≥5 and ≥0.5/1k; LLM words: ≥2 and
+≥0.4/1k; Chinese connectives: ≥8 and ≥2.0/1k chars. A 500-word abstract and a
+12,000-word full paper no longer share one absolute threshold.
+
+## Preprocessing (v0.3.3, on by default)
+
+Before auditing, non-prose content is stripped: YAML frontmatter, code fences,
+inline code, LaTeX inline/block math, Markdown links (anchor text kept), bare
+URLs, LaTeX commands; the References/Bibliography section is cut (`# References`,
+`References:`, `\section{References}`, `\begin{thebibliography}` all supported).
+Rules scan prose only — references/code/math/URLs never enter hits or density
+denominators.
 
 ## Confidence & evidence (v0.3)
 
@@ -97,7 +108,7 @@ Configure in `cordis.patch.yml`:
 ## Tests
 
 ```sh
-node tests/run-tests.mjs   # 26 TP/TN/edge cases, no framework needed
+npm test   # builds first, then 50 TP/TN/edge cases, no framework needed
 ```
 
 ## Development

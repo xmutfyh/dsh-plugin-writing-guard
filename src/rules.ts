@@ -74,10 +74,20 @@ export function countWords(text: string): number {
   return englishWords + cjkChars
 }
 
-/** 按规则单位计算密度分母 */
-function denominatorOf(text: string, unit: 'word' | 'char' | undefined): number {
-  if (unit === 'char') return text.length
-  return countWords(text)
+/** 按规则单位计算密度分母（v0.3.3：language-aware——英文规则用英文词数、中文规则用 CJK 字数，双语文件不再互相稀释） */
+function denominatorForRule(text: string, rule: Rule, unit: 'word' | 'char' | undefined): number {
+  if (unit === 'char') {
+    // char 单位：优先用 CJK 字数（中文规则），比 text.length 更准（不含英文/标点/Markdown 符号）
+    const { cjkChars } = countLexicalUnits(text)
+    return cjkChars > 0 ? cjkChars : text.length
+  }
+  const { englishWords, cjkChars } = countLexicalUnits(text)
+  // 语言感知：规则声明单一语言时用对应分母
+  if (rule.languages?.length === 1) {
+    if (rule.languages[0] === 'en') return englishWords
+    if (rule.languages[0] === 'zh') return cjkChars
+  }
+  return englishWords + cjkChars
 }
 
 export interface Rule {
@@ -546,54 +556,6 @@ export function detectDocumentProfile(filePath: string): DocumentProfile {
   return 'unknown'
 }
 
-function countEmDashes(text: string): number {
-  const matches = text.match(/——|—|–—/g)
-  return matches ? matches.length : 0
-}
-
-function countRatherThan(text: string): number {
-  const matches = text.match(/\brather than\b/gi)
-  return matches ? matches.length : 0
-}
-
-function countColonTitles(text: string): number {
-  const lines = text.split(/\r?\n/)
-  let n = 0
-  for (const line of lines) {
-    const s = line.trim()
-    if (s.length >= 5 && s.length <= 80 && /[:：]/.test(s) && !s.endsWith('.') && !s.endsWith('。')) {
-      n += 1
-    }
-  }
-  return n
-}
-
-function countNotXbutY(text: string): number {
-  const zh = text.match(/(真正重要的从来不是|并非[^，。；]{2,30}，而是|不是[^，。；]{2,30}，而是)/g) || []
-  const en = text.match(/\bnot (just |only |merely )?[a-z][^.!?]{3,60}? but (?!also )[a-z][^.!?]{2,60}\b/gi) || []
-  return zh.length + en.length
-}
-
-function countAbsolutist(text: string): number {
-  const matches = text.match(/(其核心在于|其本质在于|其基础在于|其关键在于|唯[^，。；]{0,20}才)/g)
-  return matches ? matches.length : 0
-}
-
-function countRuleOfThree(text: string): number {
-  const matches = text.match(/\b[a-z]{3,}, [a-z]{3,}, and [a-z]{3,}\b/g)
-  return matches ? matches.length : 0
-}
-
-function countLlTransition(text: string): number {
-  const matches = text.match(/\b(moreover|furthermore|additionally|in conclusion|to sum up|in summary|ultimately|that being said)\b/gi)
-  return matches ? matches.length : 0
-}
-
-function countCnConnectives(text: string): number {
-  const matches = text.match(/(值得注意的是|值得一提的是|不难发现|不难看出|显而易见|众所周知|综上所述|总的来说|与此同时|基于此|在此基础上|随着[^，。；]{2,20}的发展|在[^，。；]{2,20}的背景下|需要强调的是)/g)
-  return matches ? matches.length : 0
-}
-
 /** 规则计数（v0.3.1：单一数据源——优先用 rule.counter，否则用 rule.pattern 全局计数） */
 function countRuleOccurrences(rule: Rule, text: string): number {
   if (rule.counter) return rule.counter(text)
@@ -675,20 +637,25 @@ export function preprocess(text: string): DocumentView {
   // 4. LaTeX 块公式（$$...$$ / \[...\] / equation 环境）
   t = t.replace(/\$\$[\s\S]*?\$\$/g, ' ')
   t = t.replace(/\\\[[\s\S]*?\\\]/g, ' ')
-  // 5. URLs
+  // 5. Markdown 链接：先保留 anchor text（v0.3.3：顺序反了会导致 [text](url) 残留 "["）
+  t = t.replace(/\[([^\]]+)\]\(https?:\/\/[^)]*\)/g, '$1')
+  t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  // 6. 裸 URLs
   t = t.replace(/https?:\/\/\S+/g, ' ')
-  t = t.replace(/\[\S+\]\(https?:\/\/[^)]*\)/g, ' ')
-  // 6. LaTeX 命令（\cite{...} \ref{...} \textbf{...} 等，保留内容词）
-  t = t.replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1')
-  t = t.replace(/\\[a-zA-Z]+\s*/g, ' ')
-  // 7. References / Bibliography 段截断
-  const refMatch = t.match(/\r?\n(References|Bibliography|REFERENCES|REFERENCES|参考文献)[\s\S]*$/)
+  // 7. References / Bibliography 段截断（v0.3.3：必须放在 LaTeX 命令清理之前，
+  //    否则 \begin{thebibliography} 会被 \\[a-zA-Z]+\s* 提前吃掉）
+  const refMatch = t.match(
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:references|bibliography|参考文献)\s*:?\s*(?:\n|$)|\\begin\{thebibliography\}|\\section\*?\{References\}|\\section\*?\{Bibliography\}/i,
+  )
   let references = ''
   if (refMatch) {
     const idx = refMatch.index ?? 0
     references = t.slice(idx)
     t = t.slice(0, idx)
   }
+  // 8. LaTeX 命令（\cite{...} \ref{...} \textbf{...} 等，保留内容词）
+  t = t.replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1')
+  t = t.replace(/\\[a-zA-Z]+\s*/g, ' ')
 
   // 标题提取（Markdown # 或 LaTeX section）
   const headings: string[] = []
@@ -747,11 +714,12 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     if (!ruleMatchesProfile(rule, profile)) continue
     // 语言过滤：无法可靠检测语言时全部执行（规则本身多为双语正则）
 
-    // 密度规则（全文统计级）
+    // 密度规则（全文统计级）——v0.3.3 P0 修复：必须用 scanText（preprocessing 后的 prose），
+    // 否则 References/code/math/URL 里的词仍会污染全文计数与分母
     if (rule.threshold) {
-      const count = countRuleOccurrences(rule, text)
+      const count = countRuleOccurrences(rule, scanText)
       const unit = rule.threshold.unit ?? 'word'
-      const denominator = denominatorOf(text, unit)
+      const denominator = denominatorForRule(scanText, rule, unit)
       const rate = denominator > 0 ? (count / denominator) * 1000 : 0
       const okCount = rule.threshold.minCount === undefined || count >= rule.threshold.minCount
       const okRate = rule.threshold.perK === undefined || rate >= rule.threshold.perK

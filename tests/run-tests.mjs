@@ -250,6 +250,86 @@ console.log('=== 14. stats 与规则同源（transition 计数包含扩展短语
   check('stats.transitionCount uses rule pattern (>=8)', r.stats.transitionCount >= 8, `transitionCount=${r.stats.transitionCount}`)
 }
 
+console.log('=== 15. v0.3.3 P0：density 规则也用 preprocessing 后的 prose ===')
+{
+  // GPT P0：density 分支曾用 raw text——code fence/References 里的 delve/moreover/破折号不应触发 density 规则
+  const doc = [
+    'Normal manuscript prose.',
+    '',
+    '```',
+    'delve delve delve delve delve delve',
+    'moreover moreover moreover moreover moreover moreover moreover moreover',
+    '— — — — — —',
+    '```',
+    '',
+    'References',
+    'Smith. A delve into drying. Moreover, the model. — dash.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  check('preprocess excludes non-prose from density rules (llm-verb-noun)', !hasRule(r, 'llm-verb-noun-overuse'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+  check('preprocess excludes non-prose from density rules (em-dash)', !hasRule(r, 'em-dash-density'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 16. v0.3.3 language-aware denominator（双语文件不互相稀释）===')
+{
+  // 英文规则用英文词数做分母：1000 英文词 + 大量中文，delve 3 次 → 3/1000*1000=3.0 ≥0.4 报警
+  const en = auditText(
+    'We delve into the tapestry of the method. This is a testament to our approach. The realm of this work is broad.' +
+      ' 中文填充' + '的'.repeat(2000),
+    { profile: 'manuscript' },
+  )
+  check('en rule denominator = englishWords only (not diluted by zh)', hasRule(en, 'llm-verb-noun-overuse'), JSON.stringify(en.hits.map((h) => h.ruleId)))
+
+  // 中文规则用 CJK 字数做分母：8 个套话 + 2000 字 → 8/2000*1000=4.0 ≥2.0 报警
+  const zh = auditText(
+    '值得注意的是，众所周知，综上所述，不难发现，与此同时，基于此，随着技术的发展，在当前的背景下。' + '中'.repeat(2000),
+    { profile: 'manuscript' },
+  )
+  check('zh rule denominator = cjkChars (per 千字)', hasRule(zh, 'cn-ai-connectives'), JSON.stringify(zh.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 17. v0.3.3 References 检测扩展（# References / \section / thebibliography）===')
+{
+  const md = [
+    'The method is described.',
+    '',
+    '# References',
+    '1. Smith. The revised approach. 2020.',
+  ].join('\n')
+  const r1 = auditText(md, { profile: 'manuscript' })
+  check('# References heading truncated', !hasRule(r1, 'revised-family'), JSON.stringify(r1.hits.map((h) => h.ruleId)))
+
+  const tex = [
+    'The method is described.',
+    '',
+    '\\section{References}',
+    'Smith. The revised approach. 2020.',
+  ].join('\n')
+  const r2 = auditText(tex, { profile: 'manuscript' })
+  check('\\section{References} truncated', !hasRule(r2, 'revised-family'), JSON.stringify(r2.hits.map((h) => h.ruleId)))
+
+  const bib = [
+    'The method is described.',
+    '',
+    '\\begin{thebibliography}',
+    'Smith. The revised approach. 2020.',
+    '\\end{thebibliography}',
+  ].join('\n')
+  const r3 = auditText(bib, { profile: 'manuscript' })
+  check('\\begin{thebibliography} truncated', !hasRule(r3, 'revised-family'), JSON.stringify(r3.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 18. v0.3.3 Markdown link：保留 anchor text、URL 不进分母 ===')
+{
+  const doc = [
+    'Our method [is described here](https://example.com/revised-guide) and works well.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  // anchor text 保留 → "described here" 应计入 prose；URL 中的 "revised" 不应命中
+  check('markdown link URL stripped (no revised hit from URL)', !hasRule(r, 'revised-family'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+  check('markdown link anchor words counted in prose', r.stats.englishWords >= 7, `words=${r.stats.englishWords}`)
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

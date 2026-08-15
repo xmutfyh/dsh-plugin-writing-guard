@@ -55,11 +55,19 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 | 学术文体 | we believe/think、模糊词、抽象副词；"significantly" 仅提示复核统计语境 |
 | 格式 | 破折号密度（范围连字符不算）、冒号标题 |
 
-## 密度阈值（v0.3）
+## 密度阈值（v0.3.3）
 
-频率类规则按 **次/千词** 密度计算（不再用绝对次数）：`count >= minCount AND count/words*1000 >= perKWords` 才报警。
-例如 rather than：≥4 次且 ≥1.0/千词；破折号：≥5 次且 ≥0.5/千词；LLM 高频词：≥2 次且 ≥0.4/千词。
-500 字摘要和 12000 字全文不再用同一阈值。
+频率规则采用 **每千语言单位** 密度：英文规则按英文词数、中文规则按 CJK 字数（双语文件不互相稀释），
+同时要求 minimum count 与 density **双门槛**：`count >= minCount AND count/denominator*1000 >= perK` 才报警。
+例如 rather than：≥4 次且 ≥1.0/千词；破折号：≥5 次且 ≥0.5/千词；LLM 高频词：≥2 次且 ≥0.4/千词；
+中文套话：≥8 次且 ≥2.0/千字。500 字摘要和 12000 字全文不再用同一阈值。
+
+## preprocessing（v0.3.3，默认开启）
+
+审计前自动剥离非正文内容：YAML frontmatter、code fences、行内代码、LaTeX 行内/块公式、
+Markdown 链接（保留 anchor text）、裸 URLs、LaTeX 命令，并截断 References/Bibliography
+（支持 `# References`、`References:`、`\section{References}`、`\begin{thebibliography}`）。
+规则只扫描 prose——References/code/math/URL 不再进入命中或密度分母。
 
 ## confidence / evidence（v0.3）
 
@@ -96,7 +104,7 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
 ## 测试
 
 ```sh
-node tests/run-tests.mjs   # 26 项 TP/TN/边界用例（无测试框架依赖）
+npm test   # 自动先 build 再跑 50 项 TP/TN/边界用例（无测试框架依赖）
 ```
 
 ## 开发
