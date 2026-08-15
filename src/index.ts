@@ -37,7 +37,14 @@ export interface Config {
   projectResidueTerms: string[]
 }
 
-export const Config: Config = {
+/**
+ * 默认配置（内部常量，不导出）。
+ * 注意：不能 `export const Config = {...}` —— cordis 会把导出的 Config 当
+ * standard-schema 校验（调用 `Config["~standard"].validate`），普通对象没有
+ * `~standard` 属性会抛 "Cannot read properties of undefined (reading 'validate')"
+ * 导致整个插件树加载失败。必须作为内部常量 + apply 默认参数使用。
+ */
+const DEFAULT_CONFIG: Config = {
   autoBrief: false,
   verboseByDefault: false,
   autoAuditOnWrite: true,
@@ -97,8 +104,8 @@ function targetPathOf(exec: { name?: string; arguments?: unknown }): string | nu
   return typeof p === 'string' && p ? p : null
 }
 
-export function apply(ctx: Context, config: Config = Config): void {
-  const cfg = { ...Config, ...config }
+export function apply(ctx: Context, config: Partial<Config> = {}): void {
+  const cfg = { ...DEFAULT_CONFIG, ...config }
   const projectTerms = [...new Set([...DEFAULT_PROJECT_TERMS, ...cfg.projectResidueTerms])]
 
   ctx.tools.register(defineTool({
@@ -220,6 +227,35 @@ export function apply(ctx: Context, config: Config = Config): void {
       } catch (error) {
         ctx.logger.warn(`dsh-plugin-writing-guard: auto audit failed: ${error instanceof Error ? error.message : String(error)}`)
         return decision
+      }
+    })
+  }
+
+  // ---------- autoBrief：每轮注入纪律速查（默认关闭） ----------
+
+  if (cfg.autoBrief) {
+    // 每 agent 每 N 轮注入一次，避免打扰（默认每 5 轮）
+    const briefCounts = new Map<string, { turn: number }>()
+    const BRIEF_EVERY_TURNS = 5
+
+    ctx.on('agent/disposed', ({ agent }) => {
+      briefCounts.delete(agent.id)
+    })
+
+    ctx.on('agent/turn-stopping', async ({ agent, turn }) => {
+      try {
+        const cwd = (agent as { session?: { header?: { cwd?: string } } }).session?.header?.cwd
+        // 只在论文工作区注入（知识库布局或路径含论文特征）
+        if (!cwd || !/manuscript|paper|论文|稿件|修订|返修|review|审稿/.test(cwd)) return
+        const prev = briefCounts.get(agent.id)
+        if (prev && turn - prev.turn < BRIEF_EVERY_TURNS) return
+        briefCounts.set(agent.id, { turn })
+        ;(agent as { inject?: (msg: unknown) => void }).inject?.(createUserMessage({
+          content: [{ type: 'text', text: rulesBrief() }],
+          source: { kind: 'plugin', plugin: name },
+        }))
+      } catch (error) {
+        ctx.logger.warn(`dsh-plugin-writing-guard: autoBrief failed: ${error instanceof Error ? error.message : String(error)}`)
       }
     })
   }
