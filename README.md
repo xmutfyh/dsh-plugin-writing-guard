@@ -1,5 +1,7 @@
 # dsh-plugin-writing-guard
 
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
 DSH（DeepSeek Harness）宿主插件：**AI 论文写作常见错误守卫**。把「写作纪律」做成常驻工具，
 任何会话、任何论文在写作或修改前后都能一键扫描（也可全自动触发），避免审稿人一眼看穿的
 AI 写作痕迹、防御性写作和修改过程语句残留。

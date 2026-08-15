@@ -1,5 +1,7 @@
 # dsh-plugin-writing-guard
 
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
 **AI paper-writing style guard for DeepSeek Harness (DSH).**
 
 A host plugin that keeps your academic writing clean: it scans manuscripts for
