@@ -8,7 +8,10 @@ AI 写作痕迹、防御性写作和修改过程语句残留。
 
 ```sh
 # 从 GitHub 安装（lib/ 已提交，无需构建）
-dsh plugin --profile web add github:<你的用户名>/dsh-plugin-writing-guard
+dsh plugin --profile web add github:xmutfyh/dsh-plugin-writing-guard
+
+# 或直接从 GitHub tarball 安装
+dsh plugin --profile web add https://github.com/xmutfyh/dsh-plugin-writing-guard/archive/refs/heads/master.tar.gz
 
 # 或从本地源码目录安装
 dsh plugin --profile web add C:/Users/fyh/Downloads/dsh-plugins-src/dsh-plugin-writing-guard
@@ -16,6 +19,8 @@ dsh plugin --profile web add C:/Users/fyh/Downloads/dsh-plugins-src/dsh-plugin-w
 # 重启生效
 dsh web
 ```
+
+仓库：https://github.com/xmutfyh/dsh-plugin-writing-guard
 
 ## 解决的问题
 
