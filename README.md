@@ -1,13 +1,59 @@
-# dsh-plugin-writing-guard
+# DSH Writing Guard
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
-DSH（DeepSeek Harness）宿主插件：**确定性学术写作 linter（deterministic academic-writing linter）**。
-把「写作纪律」做成常驻工具，任何会话、任何论文在写作或修改前后都能一键扫描（也可全自动触发），
-避免审稿人一眼看穿的 AI 写作痕迹、防御性写作和修改过程语句残留。
+> DeepSeek Harness (DSH) 论文写作守卫：在论文撰写和修改过程中自动检查常见 AI 写作风格、
+> 修改残留、防御性表达与机械化句式。
+
+**适用于：中文论文、英文论文、SCI manuscript、毕业论文、学术写作与论文润色。**
+
+如果你正在寻找：
+
+- DSH 论文去 AI 味插件
+- DeepSeek Harness 学术写作插件
+- AI writing style checker for academic papers
+- academic writing guard / manuscript proofreading
+- 论文 AI 痕迹检查
+- SCI 写作 AI 味检查
+
+这个插件的定位不是在论文写完之后进行一次"大规模 Humanize"，而是：
+
+**写作前提供规则 → 写作过程中自动守卫 → 修改后自动审计。**
+
+它提供两个 DSH 原生工具：
+
+- `writing_rules`：写作前加载学术写作纪律
+- `writing_audit`：检查论文中的 AI-style patterns、revision residue、defensive writing、LLM 高频表达及结构化写作痕迹
+
+并支持在 `.md` / `.tex` / `.txt` 论文文件被 `write` / `edit` 修改后自动执行审计（v0.5 增量模式），将高风险问题反馈给 Agent。
 
 > 定位：不是 "AI 检测器"，而是一个知道自己在检查什么文档、能解释"为什么报"的写作 linter。
 > 所有规则为本地正则/统计，零网络、零 LLM 调用，毫秒级返回。
+
+## Why Writing Guard instead of a Humanizer?
+
+| | Writing Guard | Humanizer | AI Detector |
+|---|---|---|---|
+| 写作前规则 | ✅ | ❌ | ❌ |
+| 写作过程中检查 | ✅ | 通常 ❌ | ❌ |
+| 自动监听论文修改 | ✅ | ❌ | ❌ |
+| 整段重写 | ❌ | ✅ | ❌ |
+| 风格问题定位（可解释） | ✅ | 部分 | 部分 |
+| revision residue 检测 | ✅ | 不一定 | ❌ |
+| defensive writing 检测 | ✅ | 不一定 | ❌ |
+| 本地规则检查（零网络零 LLM） | ✅ | 通常需 LLM | 视工具而定 |
+
+> Writing Guard is complementary to Humanizers, not a replacement for them.
+>
+> 大多数 Humanizer 的工作流是：AI draft → rewrite → humanized version
+> Writing Guard 的工作流是：rules → writing → automatic audit → targeted revision
+>
+> **Humanizer 是写完再改，Writing Guard 是边写边防。**
+
+## 去 AI 味（说明边界）
+
+"去 AI 味"在本项目中指识别和减少机械化、模板化、过度结构化的 LLM 写作风格，
+目标是改善论文表达质量，而非保证规避任何 AI 检测系统。
 
 ## 安装
 
@@ -100,7 +146,7 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
 ```
 
 - 无变化 → 不注入（不再把同样的问题反复灌给 agent）
-- 只有已解决 → 不即时提示（等下次新增时一起汇总；全部清零时单独确认一次）
+- 只有已解决 → 简短确认（不占注入次数）
 - 只列出**新增项**详情 + 建议；完整清单仍可用 `writing_audit` 手动获取
 
 配置（web profile `cordis.patch.yml`）：
@@ -115,13 +161,39 @@ manuscript/paper/revision/response/论文/修订/返修…，或位于 01_manusc
     verboseByDefault: false
     autoBrief: false
     projectResidueTerms: []         # 项目内部词表（追加到默认词表，命中按 medium 报）
-    # stateFile 缺省即可（~/.dsh/plugins/dsh-plugin-writing-guard/state.json）；勿配空串 ''
+    stateFile: ''                   # 增量状态文件（缺省 ~/.dsh/plugins/dsh-plugin-writing-guard/state.json）
 ```
+
+## FAQ
+
+### 这是 DSH 的论文去 AI 味插件吗？
+
+可以这样理解，但 Writing Guard 与传统 Humanizer 不同。
+它主要在论文写作和修改过程中检测常见 AI 写作风格，
+而不是将全文交给另一个模型进行重写。
+
+### 支持中文论文吗？
+
+支持。规则同时覆盖中文和英文论文中常见的机械化表达、
+模板化过渡、修改过程残留和防御性写作（中英文分别按
+CJK 字数 / 英文词数独立计算密度阈值）。
+
+### 支持 SCI / English academic writing 吗？
+
+支持。`writing_audit` 可检查英文 manuscript 中的
+revision residue、defensive writing、LLM-overused expressions
+以及常见 AI-style sentence patterns。
+
+### Writing Guard 和 academic-humanizer 有什么区别？
+
+academic-humanizer 更偏向对已有文本进行自然化编辑；
+Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
+二者可以配合使用。
 
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 68 项 TP/TN/边界用例（无测试框架依赖）
+npm test   # 自动先 build 再跑 63 项 TP/TN/边界用例（无测试框架依赖）
 ```
 
 ## 开发
