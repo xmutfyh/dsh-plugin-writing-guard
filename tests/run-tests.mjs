@@ -56,7 +56,14 @@ console.log('=== 2. 文档类型检测 ===')
   check('rebuttal detect', detectDocumentProfile('response_to_reviewers.md') === 'rebuttal')
   check('cover_letter detect', detectDocumentProfile('CoverLetter.docx') === 'cover_letter')
   check('manuscript detect', detectDocumentProfile('manuscript_revised.md') === 'manuscript')
-  check('notes unknown', detectDocumentProfile('notes.txt') === 'unknown')
+  check('notes detect (v0.3.1: notes 不再半死)', detectDocumentProfile('notes.txt') === 'notes')
+  // GPT v0.3.1：综述类应判 manuscript，不判 review
+  check('systematic_review → manuscript', detectDocumentProfile('systematic_review.md') === 'manuscript')
+  check('literature_review → manuscript', detectDocumentProfile('literature_review.md') === 'manuscript')
+  check('review_article → manuscript', detectDocumentProfile('review_article.md') === 'manuscript')
+  check('reviewer_comments → review', detectDocumentProfile('reviewer_comments.md') === 'review')
+  check('peer_review → review', detectDocumentProfile('peer_review_notes.md') === 'review')
+  check('审稿意见 → review', detectDocumentProfile('审稿意见.md') === 'review')
 }
 
 console.log('=== 3. 防御性写作 / 主张校准 ===')
@@ -144,12 +151,57 @@ console.log('=== 8. 破折号密度（范围连字符不算）===')
 
 console.log('=== 9. 抽象副词与 significantly 复核 ===')
 {
+  // v0.3.1：附近有统计证据（p<0.05）的 significantly 不报；无证据的报
   const r = auditText(
-    'The difference was statistically significant (p < 0.05). The model significantly reduces the error. Remarkably, the method works.',
+    'The model significantly reduces the error without any statistical evidence provided. Remarkably, the method works.',
     { profile: 'manuscript' },
   )
   check('abstract-filler TP (remarkably)', hasRule(r, 'abstract-filler'))
-  check('significantly-context flagged for review (low)', hasRule(r, 'significantly-context'))
+  check('significantly-context TP (no p-value nearby)', hasRule(r, 'significantly-context'))
+
+  // GPT v0.3.1：significantly + p 值 → 跳过
+  const tn = auditText(
+    'The treatment group showed significantly different outcomes (p < 0.001, 95% CI [0.12, 0.34]). The effect size was Cohen\'s d = 0.8.',
+    { profile: 'manuscript' },
+  )
+  check('significantly-context TN (p-value/CI/effect size nearby)', !hasRule(tn, 'significantly-context'), JSON.stringify(tn.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 10. v0.3.1 中文 density（按词计，不用字符当词）===')
+{
+  // 中文长句：countWords 应按字计数（CJK 逐字），密度分母不再是 1
+  const zh = auditText(
+    '值得注意的是，综上所述，与此同时，随着深度学习的发展，不难发现该方法具有重要意义。',
+    { profile: 'manuscript' },
+  )
+  // 5 个套话 / 约 40 字 = 远低于 2.0/千字符阈值 → 不报
+  check('cn-ai-connectives TN (density below char threshold)', !hasRule(zh, 'cn-ai-connectives'), JSON.stringify(zh.hits.map((h) => h.ruleId)))
+
+  // 大量重复中文套话 → 报
+  const zhDense = auditText(
+    '值得注意的是，众所周知，综上所述，不难发现，与此同时，基于此，随着技术的发展，在当前的背景下，需要强调的是，值得一提的是。',
+    { profile: 'manuscript' },
+  )
+  check('cn-ai-connectives TP (density above char threshold)', hasRule(zhDense, 'cn-ai-connectives'), JSON.stringify(zhDense.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 11. v0.3.1 rebuttal 中 thank 不报 ===')
+{
+  const r = auditText(
+    'We would like to thank the reviewer for this helpful comment. We have addressed all concerns in the revised manuscript.',
+    { profile: 'rebuttal' },
+  )
+  check('it-should-be-noted TN (thank in rebuttal)', !hasRule(r, 'it-should-be-noted'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 12. v0.3.1 evidence 传播到 Hit ===')
+{
+  const r = auditText(
+    'The revised model uses ΔP.',
+    { profile: 'manuscript' },
+  )
+  const hit = r.hits.find((h) => h.ruleId === 'revised-family')
+  check('evidence propagated to hit', !!hit?.evidence && hit.evidence.type === 'style-guide', JSON.stringify(hit?.evidence))
 }
 
 console.log('')

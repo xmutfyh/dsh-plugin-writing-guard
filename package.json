@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "pretest": "npm run build",
     "test": "node tests/run-tests.mjs"
   },
   "dsh": {

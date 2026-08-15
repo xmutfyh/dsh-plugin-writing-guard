@@ -7,7 +7,7 @@
  *    reviewer" is a high-severity residue in a manuscript but perfectly
  *    normal in a rebuttal.
  *  - confidence + evidence: severity answers "how bad", confidence answers
- *    "how sure we are"; frequency rules use density (minCount + perKWords)
+ *    "how sure we are"; frequency rules use density (minCount + perK)
  *    instead of absolute counts.
  *  - category split: process_residue / claim_calibration / rhetorical_pattern
  *    / llm_associated / academic_style / formatting — not everything is an
@@ -48,10 +48,30 @@ export interface Evidence {
   source?: string
 }
 
-/** 密度阈值：count >= minCount AND count/words*1000 >= perKWords 才报警 */
+/** 密度阈值：count >= minCount AND count/denominator*1000 >= perK 才报警 */
 export interface Threshold {
   minCount?: number
-  perKWords?: number
+  /** 每千单位阈值（denominator 见 unit） */
+  perK?: number
+  /** 密度分母单位：'word'（默认，英文按词；中文用 Intl.Segmenter 切词）| 'char'（纯字符） */
+  unit?: 'word' | 'char'
+}
+
+/** 语言适应的词/字计数（GPT v0.3.1 建议：不要用英文 whitespace-word 衡量中文） */
+export function countWords(text: string): number {
+  // 中文字符单独计数（无空格），其余按空白切词
+  const cjk = text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g)
+  const cjkCount = cjk ? cjk.length : 0
+  const nonCjk = text.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, ' ')
+  const m = nonCjk.match(/\S+/g)
+  const nonCjkCount = m ? m.length : 0
+  return cjkCount + nonCjkCount
+}
+
+/** 按规则单位计算密度分母 */
+function denominatorOf(text: string, unit: 'word' | 'char' | undefined): number {
+  if (unit === 'char') return text.length
+  return countWords(text)
 }
 
 export interface Rule {
@@ -75,6 +95,17 @@ export interface Rule {
   note?: string
   /** 上下文排除：命中文本周围（整段内）匹配该模式时跳过（用于文献引用语境等误报） */
   excludeContext?: RegExp
+  /**
+   * 上下文证据窗口：命中词前后 ±window 字符内若匹配 excludeEvidence 则跳过
+   * （用于 significantly：附近有 p 值/CI/效应量即为统计显著性用法，不报）
+   */
+  contextEvidence?: {
+    window: number
+    exclude: RegExp
+  }
+  /** 密度规则的计数器（v0.3.1：单一数据源）。缺省用 pattern 对全文计数；
+   *  只有 colon-title 等真正需要特殊算法的才提供。 */
+  counter?: (text: string) => number
 }
 
 export interface Hit {
@@ -88,8 +119,10 @@ export interface Hit {
   message: string
   suggestion: string
   note?: string
+  /** v0.3.1：证据来源传播到报告（GPT：confidence+evidence 要落地到 UX） */
+  evidence?: Evidence
   /** 密度信息（全文统计级规则） */
-  density?: { count: number; perKWords: number }
+  density?: { count: number; perK: number }
 }
 
 export interface Stats {
@@ -251,6 +284,7 @@ const RULES: Rule[] = [
     message: '检测到自我削弱式表达（“遗憾的是/仍明显落后/效果有限/存在严重不足”）。',
     suggestion: '删除或改写为客观结果陈述；不占优的结果要么不设为比赛项目，要么从目标/约束/场景解释，不要主动示弱。',
     maxHits: 3,
+    profiles: ['manuscript', 'unknown'],
     languages: ['zh'],
     evidence: { type: 'style-guide', source: '扬长避短提示词' },
   },
@@ -260,10 +294,12 @@ const RULES: Rule[] = [
     severity: 'low',
     confidence: 'medium',
     label: '元评论开场白',
-    pattern: /\b(it (should|must) be (noted|mentioned|pointed out|stressed|emphasized)|it is (worth|important|necessary|essential) (noting|to note|to mention)|we (would )?like to (note|point out|emphasize|stress|mention|highlight|thank))\b/gi,
+    // v0.3.1：移除 "thank"（"we would like to thank the reviewer" 在 rebuttal 中完全正常）
+    pattern: /\b(it (should|must) be (noted|mentioned|pointed out|stressed|emphasized)|it is (worth|important|necessary|essential) (noting|to note|to mention)|we (would )?like to (note|point out|emphasize|stress|mention|highlight))\b/gi,
     message: '“it should be noted / it is worth noting / we would like to…”是元评论开场白，冗余且带辩护味。',
     suggestion: '直接陈述内容本身，删掉开场白。',
     maxHits: 3,
+    profiles: ['manuscript', 'unknown'],
     languages: ['en'],
     evidence: { type: 'heuristic' },
   },
@@ -274,7 +310,7 @@ const RULES: Rule[] = [
     confidence: 'medium',
     label: '局限性分散重复',
     pattern: /(limitation|局限|不足|cannot be (generalized|extended)|not be applied)/gi,
-    threshold: { minCount: 3, perKWords: 0.5 },
+    threshold: { minCount: 3, perK: 0.5 },
     message: '“局限/limitation”类表述全文出现较多（≥3 次且密度 ≥0.5/千词），可能在多个章节重复免责。',
     suggestion: '边界声明集中写：方法定位一处 + 结论边界一处；其余用证据角色表达。注意：在 Discussion 中正当陈述局限（ICMJE 要求）不算问题，重点是避免同一局限在多个章节重复。',
     languages: ['zh', 'en'],
@@ -315,7 +351,7 @@ const RULES: Rule[] = [
     confidence: 'medium',
     label: '“rather than”过度使用',
     pattern: /\brather than\b/gi,
-    threshold: { minCount: 4, perKWords: 1.0 },
+    threshold: { minCount: 4, perK: 1.0 },
     message: '“rather than”全文密度过高（≥4 次且 ≥1.0/千词），其中往往混有防御性对仗（“…rather than a claim of…”）。',
     suggestion: '逐句复核：概念澄清（如 “a Darcy-derived descriptor rather than intrinsic permeability”）可保留；防御性表述（如 “rather than a claim of uniform dominance”）改为正面陈述。',
     languages: ['en'],
@@ -341,7 +377,7 @@ const RULES: Rule[] = [
     confidence: 'low',
     label: '三连排比（rule of three）',
     pattern: /\b[a-z]{3,}, [a-z]{3,}, and [a-z]{3,}\b/g,
-    threshold: { minCount: 4, perKWords: 0.8 },
+    threshold: { minCount: 4, perK: 0.8 },
     message: '“X, Y, and Z”三连排比全文密度过高（≥4 处且 ≥0.8/千词）。LLM 偏爱恰好三组的对称结构（“clear, concise, and compelling”），是社区公认的 AI 结构痕迹。',
     suggestion: '保留确实需要列举的三项；纯修辞性三连改为更自然的表述，长短句混用打破节奏。',
     languages: ['en'],
@@ -356,7 +392,7 @@ const RULES: Rule[] = [
     confidence: 'low',
     label: 'LLM 高频动词/名词（delve/tapestry/testament…）',
     pattern: /\b(delve|delve into|tapestry|testament|beacon|cornerstone|embark|meticulous|showcase|boast|seamless|unlock|elevate|foster|harness|navigate|streamline|underscore|pivotal|realm|nuanced|multifaceted|intricate|leverage|utilize|holistic|paradigm|cutting-edge|state-of-the-art)\b/gi,
-    threshold: { minCount: 2, perKWords: 0.4 },
+    threshold: { minCount: 2, perK: 0.4 },
     message: 'LLM 高频词密度信号（Kobak et al., Science Advances 2025，>15M 摘要统计 + 社区词表）：delve/tapestry/testament/leverage/harness 等词在 ChatGPT 发布后出现率骤升。密度低时不必处理；密度高时逐词替换。',
     suggestion: '替换为更具体、更朴素的动词/名词：delve→examine/analyze，tapestry→range/body of work，testament→evidence/reflection，leverage→use/exploit，harness→apply/employ。注意：这些词是概率信号而非证据，出现 1 次不必惊慌，密度高才需处理。',
     languages: ['en'],
@@ -370,7 +406,7 @@ const RULES: Rule[] = [
     confidence: 'low',
     label: 'LLM 高频连接/过渡词（moreover/furthermore/in conclusion…）',
     pattern: /\b(moreover|furthermore|additionally|in conclusion|to sum up|in summary|ultimately|that being said|in today's|in the realm of|when it comes to|a wide range of|plays? a crucial role in|it is worth mentioning|navigating the complexities of)\b/gi,
-    threshold: { minCount: 8, perKWords: 1.5 },
+    threshold: { minCount: 8, perK: 1.5 },
     message: 'LLM 高频过渡词/套话密度过高（≥8 次且 ≥1.5/千词）。moreover/furthermore/in conclusion 等在 LLM 输出中过度使用，机械推进感强。',
     suggestion: '删除大部分过渡词，用内容本身的逻辑推进；段间连接靠论证关系而非连接词堆砌。学术写作中这些词出现 1–2 次正常，密度高才处理。',
     languages: ['en'],
@@ -383,7 +419,7 @@ const RULES: Rule[] = [
     confidence: 'low',
     label: '中文 AI 高频连接词',
     pattern: /(值得注意的是|值得一提的是|不难发现|不难看出|显而易见|众所周知|综上所述|总的来说|与此同时|基于此|在此基础上|随着[^，。；]{2,20}的发展|在[^，。；]{2,20}的背景下|需要强调的是)/g,
-    threshold: { minCount: 8, perKWords: 2.0 },
+    threshold: { minCount: 8, perK: 2.0, unit: 'char' },
     message: '中文 AI 高频套话密度过高（≥8 次且 ≥2.0/千词）：“值得注意的是/综上所述/与此同时/随着…的发展”等是 LLM 中文输出的典型连接词。',
     suggestion: '删除大部分套话，让论证内容直接呈现；保留少量用于真实转折即可。',
     languages: ['zh'],
@@ -411,7 +447,12 @@ const RULES: Rule[] = [
     confidence: 'low',
     label: '"significantly" 无统计证据',
     pattern: /\bsignificantly\b/gi,
-    message: '“significantly”出现但需人工复核：若附近 ±100 字符没有效应量/p 值/置信区间等定量证据，则属于空泛判断。',
+    // v0.3.1：真正实现"附近有统计证据则跳过"（GPT：文案写了逻辑没实现）
+    contextEvidence: {
+      window: 120,
+      exclude: /(p\s*[<≤=]\s*0?\.?\d|p\s*=\s*0?\.?\d|95%\s*CI|confidence interval|CI\s*[\[(]|OR\s*=\s*[\d.]|HR\s*=\s*[\d.]|β\s*=\s*[\d.]|effect size|Cohen'?s\s*d|statistically significant|significant (difference|association|correlation|increase|decrease|reduction|improvement|effect|change))/i,
+    },
+    message: '“significantly”出现但需人工复核：若附近 ±120 字符没有效应量/p 值/置信区间等定量证据，则属于空泛判断。',
     suggestion: '统计显著性（significantly different, p < 0.05 / statistically significant）是正当学术用法，ICMJE 要求报告；仅当该词用于修辞性强调且无统计证据时，改为具体数值。',
     maxHits: 4,
     languages: ['en'],
@@ -453,7 +494,7 @@ const RULES: Rule[] = [
     confidence: 'medium',
     label: '破折号密度过高',
     pattern: /(——|—|–—)/g,
-    threshold: { minCount: 5, perKWords: 0.5 },
+    threshold: { minCount: 5, perK: 0.5 },
     message: '破折号全文密度过高（≥5 次且 ≥0.5/千词）。审稿人明确说：“破折号是否全文都是”——铺天盖地的破折号明显不是“人”的话语习惯。',
     suggestion: '删除大部分破折号，改用逗号、分号或拆句；全文保留 1–2 处即可。注意：范围连字符（30–75 °C、fold–seed）不算，只统计长破折号。',
     languages: ['zh', 'en'],
@@ -466,7 +507,7 @@ const RULES: Rule[] = [
     confidence: 'low',
     label: '冒号标题滥用',
     pattern: /^[^#\n]{0,60}[:：][^:：\n]{0,60}$/gm,
-    threshold: { minCount: 3, perKWords: 0.6 },
+    threshold: { minCount: 3, perK: 0.6 },
     message: '检测到多个“XXX: XXXXXXX”式标题。审稿人指出：标题冒号前后必须是适合冒号的关系（并列或递进），否则明显是硬凑。',
     suggestion: '检查每个冒号标题：冒号前后是否并列/递进？不是则改题。',
     languages: ['zh', 'en'],
@@ -478,19 +519,18 @@ const RULES: Rule[] = [
 // 工具函数
 // ---------------------------------------------------------------------------
 
-/** 简单分词：按空白切分，用于密度计算 */
-export function countWords(text: string): number {
-  const m = text.match(/\S+/g)
-  return m ? m.length : 0
-}
-
-/** 检测文档类型（从文件路径推断） */
+/** 检测文档类型（从文件路径推断）——v0.3.1 收紧：peer-review 只认明确词，综述类归 manuscript */
 export function detectDocumentProfile(filePath: string): DocumentProfile {
   const norm = filePath.replace(/\\/g, '/').toLowerCase()
   if (/rebuttal|response[_ -]?to[_ -]?reviewers?|回复审稿|返修回复|逐条回复/.test(norm)) return 'rebuttal'
   if (/cover[_ -]?letter|投稿信/.test(norm)) return 'cover_letter'
-  if (/review|审稿意见|评审/.test(norm) && !/manuscript|论文/.test(norm)) return 'review'
+  // 明确的审稿材料（GPT v0.3.1：systematic_review / literature_review / scoping_review / review_article 是论文而非审稿意见）
+  if (/(reviewer[_ -]?comments?|review[_ -]?comments?|peer[_ -]?review|referee[_ -]?report|审稿意见|评审意见)/.test(norm)) return 'review'
+  // 综述类论文归 manuscript
+  if (/(systematic[_ -]?review|literature[_ -]?review|scoping[_ -]?review|review[_ -]?article|narrative[_ -]?review)/.test(norm)) return 'manuscript'
   if (/manuscript|paper|thesis|论文|稿件|修订|返修稿/.test(norm)) return 'manuscript'
+  // 一般笔记/草稿（GPT v0.3.1：让 notes profile 可被自动检测到）
+  if (/(^|\/)(notes?|draft|草稿|笔记|scratch)(\/|\.|$)/.test(norm)) return 'notes'
   return 'unknown'
 }
 
@@ -542,25 +582,13 @@ function countCnConnectives(text: string): number {
   return matches ? matches.length : 0
 }
 
-/** 全局计数（用于密度规则与统计行） */
-function countRuleOccurrences(ruleId: string, text: string): number {
-  switch (ruleId) {
-    case 'em-dash-density': return countEmDashes(text)
-    case 'rather-than-heavy': return countRatherThan(text)
-    case 'colon-title': return countColonTitles(text)
-    case 'llm-transition-overuse': return countLlTransition(text)
-    case 'rule-of-three': return countRuleOfThree(text)
-    case 'cn-ai-connectives': return countCnConnectives(text)
-    case 'llm-verb-noun-overuse': {
-      const m = text.match(/\b(delve|tapestry|testament|beacon|cornerstone|embark|meticulous|showcase|boast|seamless|unlock|elevate|foster|harness|navigate|streamline|underscore|pivotal|realm|nuanced|multifaceted|intricate|leverage|utilize|holistic|paradigm|cutting-edge|state-of-the-art)\b/gi)
-      return m ? m.length : 0
-    }
-    case 'limitation-dispersal': {
-      const m = text.match(/(limitation|局限|不足|cannot be (generalized|extended)|not be applied)/gi)
-      return m ? m.length : 0
-    }
-    default: return 0
-  }
+/** 规则计数（v0.3.1：单一数据源——优先用 rule.counter，否则用 rule.pattern 全局计数） */
+function countRuleOccurrences(rule: Rule, text: string): number {
+  if (rule.counter) return rule.counter(text)
+  // 无 g 标志的正则克隆并加 g
+  const re = new RegExp(rule.pattern.source, rule.pattern.flags.includes('g') ? rule.pattern.flags : rule.pattern.flags + 'g')
+  const m = text.match(re)
+  return m ? m.length : 0
 }
 
 function ruleMatchesProfile(rule: Rule, profile: DocumentProfile): boolean {
@@ -636,7 +664,6 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
   }
 
   const hits: Hit[] = []
-  const perK = (n: number) => words > 0 ? (n / words) * 1000 : 0
 
   for (const rule of RULES) {
     // 文档类型过滤
@@ -645,10 +672,12 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
 
     // 密度规则（全文统计级）
     if (rule.threshold) {
-      const count = countRuleOccurrences(rule.id, text)
-      const rate = perK(count)
+      const count = countRuleOccurrences(rule, text)
+      const unit = rule.threshold.unit ?? 'word'
+      const denominator = denominatorOf(text, unit)
+      const rate = denominator > 0 ? (count / denominator) * 1000 : 0
       const okCount = rule.threshold.minCount === undefined || count >= rule.threshold.minCount
-      const okRate = rule.threshold.perKWords === undefined || rate >= rule.threshold.perKWords
+      const okRate = rule.threshold.perK === undefined || rate >= rule.threshold.perK
       if (okCount && okRate) {
         hits.push({
           ruleId: rule.id,
@@ -657,11 +686,12 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
           confidence: rule.confidence,
           label: rule.label,
           paragraphIndex: -1,
-          snippet: `（全文统计）${rule.label}：${count} 次 / ${words} 词（${rate.toFixed(2)}/千词）`,
+          snippet: `（全文统计）${rule.label}：${count} 次 / ${denominator} ${unit === 'char' ? '字符' : '词'}（${rate.toFixed(2)}/千${unit === 'char' ? '字符' : '词'}）`,
           message: rule.message,
           suggestion: rule.suggestion,
           note: rule.note,
-          density: { count, perKWords: Math.round(rate * 100) / 100 },
+          evidence: rule.evidence,
+          density: { count, perK: Math.round(rate * 100) / 100 },
         })
       }
       continue
@@ -680,6 +710,19 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         rule.pattern.lastIndex = 0
         continue
       }
+      // 上下文证据窗口（v0.3.1）：命中词附近有统计证据则跳过
+      if (rule.contextEvidence && m.index !== undefined) {
+        const { window: w, exclude } = rule.contextEvidence
+        const start = Math.max(0, m.index - w)
+        const end = Math.min(para.length, m.index + (m[0]?.length ?? 0) + w)
+        const windowText = para.slice(start, end)
+        if (exclude.test(windowText)) {
+          exclude.lastIndex = 0
+          rule.pattern.lastIndex = 0
+          continue
+        }
+        exclude.lastIndex = 0
+      }
       found += 1
       const start = Math.max(0, (m.index ?? 0) - 60)
       const end = Math.min(para.length, (m.index ?? 0) + (m[0]?.length ?? 0) + 80)
@@ -695,6 +738,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         message: rule.message,
         suggestion: rule.suggestion,
         note: rule.note,
+        evidence: rule.evidence,
       })
       rule.pattern.lastIndex = 0
     }
@@ -785,6 +829,10 @@ export function formatReport(report: AuditReport, opts?: { verbose?: boolean }):
     if (opts?.verbose) {
       lines.push(`    提示：${h.message}`)
       lines.push(`    建议：${h.suggestion}`)
+      if (h.evidence) {
+        const src = h.evidence.source ? ` — ${h.evidence.source}` : ''
+        lines.push(`    依据：${h.evidence.type}${src}`)
+      }
       if (h.note) lines.push(`    备注：${h.note}`)
     }
     lines.push('')
