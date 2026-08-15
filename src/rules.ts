@@ -57,15 +57,21 @@ export interface Threshold {
   unit?: 'word' | 'char'
 }
 
-/** 语言适应的词/字计数（GPT v0.3.1 建议：不要用英文 whitespace-word 衡量中文） */
-export function countWords(text: string): number {
+/** 语言适应的词/字计数（v0.3.1：不要用英文 whitespace-word 衡量中文） */
+export function countLexicalUnits(text: string): { englishWords: number; cjkChars: number } {
   // 中文字符单独计数（无空格），其余按空白切词
   const cjk = text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g)
-  const cjkCount = cjk ? cjk.length : 0
+  const cjkChars = cjk ? cjk.length : 0
   const nonCjk = text.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, ' ')
   const m = nonCjk.match(/\S+/g)
-  const nonCjkCount = m ? m.length : 0
-  return cjkCount + nonCjkCount
+  const englishWords = m ? m.length : 0
+  return { englishWords, cjkChars }
+}
+
+/** 兼容：密度分母用词/字合计（英文按词、中文按字） */
+export function countWords(text: string): number {
+  const { englishWords, cjkChars } = countLexicalUnits(text)
+  return englishWords + cjkChars
 }
 
 /** 按规则单位计算密度分母 */
@@ -93,15 +99,16 @@ export interface Rule {
   evidence?: Evidence
   /** 合法使用场景说明（显示在报告中，避免误伤） */
   note?: string
-  /** 上下文排除：命中文本周围（整段内）匹配该模式时跳过（用于文献引用语境等误报） */
-  excludeContext?: RegExp
   /**
-   * 上下文证据窗口：命中词前后 ±window 字符内若匹配 excludeEvidence 则跳过
-   * （用于 significantly：附近有 p 值/CI/效应量即为统计显著性用法，不报）
+   * 命中位置局部的上下文判断（v0.3.1：match-local，不再整段排除——防止
+   * 同段落内合法用法连带放过真正的残留）：
+   *   exclude: 命中词 ±window 内匹配则跳过（文献引用语境、统计证据等）
+   *   require: 命中词 ±window 内必须匹配否则跳过（正向证据）
    */
-  contextEvidence?: {
+  context?: {
     window: number
-    exclude: RegExp
+    exclude?: RegExp
+    require?: RegExp
   }
   /** 密度规则的计数器（v0.3.1：单一数据源）。缺省用 pattern 对全文计数；
    *  只有 colon-title 等真正需要特殊算法的才提供。 */
@@ -127,6 +134,8 @@ export interface Hit {
 
 export interface Stats {
   words: number
+  englishWords: number       // v0.3.1：拆开，避免"中文按词"的误导
+  cjkChars: number
   emDashCount: number
   colonTitleCount: number
   notXbutYCount: number
@@ -183,8 +192,11 @@ const RULES: Rule[] = [
     languages: ['en'],
     evidence: { type: 'style-guide', source: '写作纪律页：修改过程残留黑名单' },
     note: '在 rebuttal（回复信）中 "the revised manuscript" 属正常表述，不报警。',
-    /** 文献引用语境排除：proposed/presented/introduced a revised model（他人工作） */
-    excludeContext: /(proposed|presented|introduced|described|developed|reported|published|offered) (a |the |an )?revised/i,
+    // v0.3.1：match-local 排除——只检查当前命中 ±80 字符，不再整段排除
+    context: {
+      window: 80,
+      exclude: /(proposed|presented|introduced|described|developed|reported|published|offered) (a |the |an )?revised/i,
+    },
   },
   {
     id: 'as-requested',
@@ -420,7 +432,7 @@ const RULES: Rule[] = [
     label: '中文 AI 高频连接词',
     pattern: /(值得注意的是|值得一提的是|不难发现|不难看出|显而易见|众所周知|综上所述|总的来说|与此同时|基于此|在此基础上|随着[^，。；]{2,20}的发展|在[^，。；]{2,20}的背景下|需要强调的是)/g,
     threshold: { minCount: 8, perK: 2.0, unit: 'char' },
-    message: '中文 AI 高频套话密度过高（≥8 次且 ≥2.0/千词）：“值得注意的是/综上所述/与此同时/随着…的发展”等是 LLM 中文输出的典型连接词。',
+    message: '中文 AI 高频套话密度过高（≥8 次且 ≥2.0/千字符）：“值得注意的是/综上所述/与此同时/随着…的发展”等是 LLM 中文输出的典型连接词。',
     suggestion: '删除大部分套话，让论证内容直接呈现；保留少量用于真实转折即可。',
     languages: ['zh'],
     evidence: { type: 'heuristic' },
@@ -447,8 +459,8 @@ const RULES: Rule[] = [
     confidence: 'low',
     label: '"significantly" 无统计证据',
     pattern: /\bsignificantly\b/gi,
-    // v0.3.1：真正实现"附近有统计证据则跳过"（GPT：文案写了逻辑没实现）
-    contextEvidence: {
+    // v0.3.1：真正实现"附近有统计证据则跳过"（GPT：文案写了逻辑没实现）；match-local 窗口
+    context: {
       window: 120,
       exclude: /(p\s*[<≤=]\s*0?\.?\d|p\s*=\s*0?\.?\d|95%\s*CI|confidence interval|CI\s*[\[(]|OR\s*=\s*[\d.]|HR\s*=\s*[\d.]|β\s*=\s*[\d.]|effect size|Cohen'?s\s*d|statistically significant|significant (difference|association|correlation|increase|decrease|reduction|improvement|effect|change))/i,
     },
@@ -591,6 +603,12 @@ function countRuleOccurrences(rule: Rule, text: string): number {
   return m ? m.length : 0
 }
 
+/** 按 ruleId 计数（v0.3.1：stats 与规则同一 source of truth，杜绝 drift） */
+function countRuleById(id: string, text: string): number {
+  const rule = RULES.find((r) => r.id === id)
+  return rule ? countRuleOccurrences(rule, text) : 0
+}
+
 function ruleMatchesProfile(rule: Rule, profile: DocumentProfile): boolean {
   if (!rule.profiles || rule.profiles.length === 0) return true
   if (rule.profiles.includes(profile)) return true
@@ -632,35 +650,94 @@ export function filterReport(report: AuditReport, minSeverity: Severity): AuditR
 // 主审计
 // ---------------------------------------------------------------------------
 
+/**
+ * v0.4 preprocessing 基础层（GPT 优先级最高）：剥离非 prose 内容，
+ * 让规则只扫描真正的论文正文，References/code/math/URL 不再污染统计。
+ */
+export interface DocumentView {
+  raw: string
+  /** 剥离 code fences / YAML frontmatter / LaTeX math / URLs / References 后的正文 */
+  prose: string
+  headings: string[]
+  references: string
+}
+
+/** 简单 Markdown/LaTeX 预处理：返回 prose 视图 */
+export function preprocess(text: string): DocumentView {
+  let t = text
+  // 1. YAML frontmatter（--- ... --- 开头）
+  t = t.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
+  // 2. code fences（``` ... ``` / ~~~ ... ~~~）
+  t = t.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, '')
+  // 3. 行内代码与 LaTeX 行内公式
+  t = t.replace(/`[^`\n]*`/g, ' ')
+  t = t.replace(/\$[^$\n]+\$/g, ' ')
+  // 4. LaTeX 块公式（$$...$$ / \[...\] / equation 环境）
+  t = t.replace(/\$\$[\s\S]*?\$\$/g, ' ')
+  t = t.replace(/\\\[[\s\S]*?\\\]/g, ' ')
+  // 5. URLs
+  t = t.replace(/https?:\/\/\S+/g, ' ')
+  t = t.replace(/\[\S+\]\(https?:\/\/[^)]*\)/g, ' ')
+  // 6. LaTeX 命令（\cite{...} \ref{...} \textbf{...} 等，保留内容词）
+  t = t.replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1')
+  t = t.replace(/\\[a-zA-Z]+\s*/g, ' ')
+  // 7. References / Bibliography 段截断
+  const refMatch = t.match(/\r?\n(References|Bibliography|REFERENCES|REFERENCES|参考文献)[\s\S]*$/)
+  let references = ''
+  if (refMatch) {
+    const idx = refMatch.index ?? 0
+    references = t.slice(idx)
+    t = t.slice(0, idx)
+  }
+
+  // 标题提取（Markdown # 或 LaTeX section）
+  const headings: string[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s{0,3}#{1,6}\s+(.+)$/)
+    if (m) headings.push(m[1].trim())
+  }
+
+  return { raw: text, prose: t, headings, references }
+}
+
 export interface AuditOptions {
   profile?: DocumentProfile
   maxParagraphs?: number
   /** 项目内部词表（默认已有通用词；用户可在配置中追加/覆盖） */
   projectResidueTerms?: string[]
+  /** v0.4：true 时先预处理再审计（剥离 references/code/math/URL），默认 true */
+  preprocess?: boolean
 }
 
 export function auditText(text: string, opts?: AuditOptions): AuditReport {
   const profile = opts?.profile ?? 'unknown'
   const maxParagraphs = opts?.maxParagraphs ?? 400
-  const paragraphs = text
+  // v0.4 preprocessing：默认剥离 references/code/math/URL，规则只扫 prose
+  const view = opts?.preprocess === false ? { raw: text, prose: text, headings: [], references: '' } : preprocess(text)
+  const scanText = view.prose
+  const paragraphs = scanText
     .split(/\n{2,}|\r?\n\r?\n/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
     .slice(0, maxParagraphs)
 
-  const words = countWords(text)
+  const { englishWords, cjkChars } = countLexicalUnits(scanText)
+  const words = englishWords + cjkChars
   const stats: Stats = {
     words,
-    emDashCount: countEmDashes(text),
-    colonTitleCount: countColonTitles(text),
-    notXbutYCount: countNotXbutY(text),
-    ratherThanCount: countRatherThan(text),
-    absolutistCount: countAbsolutist(text),
-    ruleOfThreeCount: countRuleOfThree(text),
-    transitionCount: countLlTransition(text),
-    cnConnectivesCount: countCnConnectives(text),
+    englishWords,
+    cjkChars,
+    // v0.3.1：统计与规则同一 source of truth（GPT：杜绝 counter 漂移）
+    emDashCount: countRuleById('em-dash-density', scanText),
+    colonTitleCount: countRuleById('colon-title', scanText),
+    notXbutYCount: countRuleById('not-x-but-y-zh', scanText) + countRuleById('not-x-but-y-en', scanText),
+    ratherThanCount: countRuleById('rather-than-heavy', scanText),
+    absolutistCount: countRuleById('absolutist-def', scanText),
+    ruleOfThreeCount: countRuleById('rule-of-three', scanText),
+    transitionCount: countRuleById('llm-transition-overuse', scanText),
+    cnConnectivesCount: countRuleById('cn-ai-connectives', scanText),
     paragraphs: paragraphs.length,
-    chars: text.length,
+    chars: scanText.length,
   }
 
   const hits: Hit[] = []
@@ -704,24 +781,24 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
       const para = paragraphs[i]
       const m = rule.pattern.exec(para)
       if (!m) continue
-      // 上下文排除（文献引用语境等）
-      if (rule.excludeContext && rule.excludeContext.test(para)) {
-        rule.excludeContext.lastIndex = 0
-        rule.pattern.lastIndex = 0
-        continue
-      }
-      // 上下文证据窗口（v0.3.1）：命中词附近有统计证据则跳过
-      if (rule.contextEvidence && m.index !== undefined) {
-        const { window: w, exclude } = rule.contextEvidence
+      // 命中位置局部上下文（v0.3.1 match-local）：只看当前 match ±window，不再整段排除
+      if (rule.context && m.index !== undefined) {
+        const { window: w, exclude, require: requireRe } = rule.context
         const start = Math.max(0, m.index - w)
         const end = Math.min(para.length, m.index + (m[0]?.length ?? 0) + w)
         const windowText = para.slice(start, end)
-        if (exclude.test(windowText)) {
+        if (exclude && exclude.test(windowText)) {
           exclude.lastIndex = 0
           rule.pattern.lastIndex = 0
           continue
         }
-        exclude.lastIndex = 0
+        exclude?.lastIndex !== undefined && (exclude.lastIndex = 0)
+        if (requireRe && !requireRe.test(windowText)) {
+          requireRe.lastIndex = 0
+          rule.pattern.lastIndex = 0
+          continue
+        }
+        requireRe?.lastIndex !== undefined && (requireRe.lastIndex = 0)
       }
       found += 1
       const start = Math.max(0, (m.index ?? 0) - 60)
@@ -767,8 +844,8 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         snippet: (start > 0 ? '…' : '') + para.slice(start, end) + (end < para.length ? '…' : ''),
         message: `检测到项目内部词表条目 "${m[0]}"（可通过 writing_audit 的 projectResidueTerms 配置维护）。`,
         suggestion: '确认为内部流程词则删除或改写；若不是内部词，请从 projectResidueTerms 移除。',
-        evidence: { type: 'project-specific' } as unknown as Evidence,
-      } as unknown as Hit)
+        evidence: { type: 'project-specific' },
+      })
       re.lastIndex = 0
     }
   }
@@ -807,7 +884,7 @@ export function formatReport(report: AuditReport, opts?: { verbose?: boolean }):
   const lines: string[] = []
   const profileTag = report.profile !== 'unknown' ? `（文档类型: ${report.profile}）` : ''
   lines.push(`写作纪律检查报告${profileTag}：${hits.length === 0 ? '✅ 通过' : `发现 ${summary.total} 处问题（高 ${summary.high} / 中 ${summary.medium} / 低 ${summary.low}）`}`)
-  lines.push(`- 统计：${stats.paragraphs} 段 / ${stats.chars} 字符 / ${stats.words} 词；破折号 ${stats.emDashCount}；rather than ${stats.ratherThanCount}；不是X而是Y ${stats.notXbutYCount}；绝对化定义 ${stats.absolutistCount}；三连排比 ${stats.ruleOfThreeCount}；LLM过渡词 ${stats.transitionCount}；中文套话 ${stats.cnConnectivesCount}；冒号标题 ${stats.colonTitleCount}`)
+  lines.push(`- 统计：${stats.paragraphs} 段 / ${stats.chars} 字符（英文 ${stats.englishWords} 词 + 中文 ${stats.cjkChars} 字）；破折号 ${stats.emDashCount}；rather than ${stats.ratherThanCount}；不是X而是Y ${stats.notXbutYCount}；绝对化定义 ${stats.absolutistCount}；三连排比 ${stats.ruleOfThreeCount}；LLM过渡词 ${stats.transitionCount}；中文套话 ${stats.cnConnectivesCount}；冒号标题 ${stats.colonTitleCount}`)
   if (hits.length === 0) return lines.join('\n')
 
   const cats = Object.entries(summary.byCategory)
@@ -868,7 +945,7 @@ export function rulesBrief(): string {
     '## 四、LLM 关联词（llm-associated，概率信号非证据）',
     '- delve/tapestry/testament/leverage/harness/underscore/pivotal/meticulous 等：全文 ≥2 次且 ≥0.4/千词才提示，单次出现不处理',
     '- 过渡词（moreover/furthermore/in conclusion/ultimately）≥8 次且 ≥1.5/千词时删除大部分',
-    '- 中文套话（值得注意的是/综上所述/随着…的发展）≥8 次且 ≥2.0/千词时精简',
+    '- 中文套话（值得注意的是/综上所述/随着…的发展）≥8 次且 ≥2.0/千字符时精简',
     '',
     '## 五、学术文体与格式（academic style / formatting）',
     '- 抽象副词（remarkably/interestingly/importantly）换成具体数值',

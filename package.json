@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "description": "DSH plugin: deterministic academic-writing linter — document-profile-aware (manuscript/rebuttal/cover_letter) scanning for revision residue, claim-calibration issues, rhetorical patterns, LLM-associated vocabulary, and formatting tells; density-based thresholds with confidence/evidence; writing_audit + writing_rules tools with auto-audit on paper file writes",
   "type": "module",
   "main": "lib/index.js",

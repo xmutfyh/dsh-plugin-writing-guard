@@ -167,22 +167,28 @@ console.log('=== 9. 抽象副词与 significantly 复核 ===')
   check('significantly-context TN (p-value/CI/effect size nearby)', !hasRule(tn, 'significantly-context'), JSON.stringify(tn.hits.map((h) => h.ruleId)))
 }
 
-console.log('=== 10. v0.3.1 中文 density（按词计，不用字符当词）===')
+console.log('=== 10. v0.3.1 中文 density（按字符计，拆 minCount/density 双 gate）===')
 {
-  // 中文长句：countWords 应按字计数（CJK 逐字），密度分母不再是 1
-  const zh = auditText(
-    '值得注意的是，综上所述，与此同时，随着深度学习的发展，不难发现该方法具有重要意义。',
+  // gate 1 — minCount TN：密度极高，但次数 < 8（GPT：原测试注释写错，实际只验证了 minCount gate）
+  const few = auditText(
+    '值得注意的是，众所周知，综上所述，不难发现，与此同时。',
     { profile: 'manuscript' },
   )
-  // 5 个套话 / 约 40 字 = 远低于 2.0/千字符阈值 → 不报
-  check('cn-ai-connectives TN (density below char threshold)', !hasRule(zh, 'cn-ai-connectives'), JSON.stringify(zh.hits.map((h) => h.ruleId)))
+  check('cn-ai-connectives minCount TN (5 hits < 8, density high)', !hasRule(few, 'cn-ai-connectives'), JSON.stringify(few.hits.map((h) => h.ruleId)))
 
-  // 大量重复中文套话 → 报
-  const zhDense = auditText(
-    '值得注意的是，众所周知，综上所述，不难发现，与此同时，基于此，随着技术的发展，在当前的背景下，需要强调的是，值得一提的是。',
+  // gate 2 — density TN：次数 >= 8，但文本足够长使 perK < 2.0/千字符
+  // 8 次套话分散在 ~5000 字填充文本里（8/5000*1000 = 1.6 < 2）
+  const filler = Array(200).fill('该方法在实验条件下表现出良好的性能与稳定性，结果支持后续工程应用。').join('')
+  const sparseText = '值得注意的是，众所周知，综上所述，不难发现，与此同时，基于此，随着技术的发展，在当前的背景下。' + filler
+  const sparse = auditText(sparseText, { profile: 'manuscript' })
+  check('cn-ai-connectives density TN (count>=8 but perK<2)', !hasRule(sparse, 'cn-ai-connectives'), JSON.stringify(sparse.hits.map((h) => h.ruleId)))
+
+  // TP：两个条件同时满足
+  const dense = auditText(
+    '值得注意的是，众所周知，综上所述，不难发现，与此同时，基于此，随着技术的发展，在当前的背景下，需要强调的是，值得一提的是，总的来说。',
     { profile: 'manuscript' },
   )
-  check('cn-ai-connectives TP (density above char threshold)', hasRule(zhDense, 'cn-ai-connectives'), JSON.stringify(zhDense.hits.map((h) => h.snippet)))
+  check('cn-ai-connectives TP (count>=8 AND perK>=2)', hasRule(dense, 'cn-ai-connectives'), JSON.stringify(dense.hits.map((h) => h.snippet)))
 }
 
 console.log('=== 11. v0.3.1 rebuttal 中 thank 不报 ===')
@@ -202,6 +208,46 @@ console.log('=== 12. v0.3.1 evidence 传播到 Hit ===')
   )
   const hit = r.hits.find((h) => h.ruleId === 'revised-family')
   check('evidence propagated to hit', !!hit?.evidence && hit.evidence.type === 'style-guide', JSON.stringify(hit?.evidence))
+}
+
+console.log('=== 13. v0.4 preprocessing：references/code/math/URL 不污染 ===')
+{
+  // References 里的 "revised" 不应报；代码块里的词不应计入 density
+  const doc = [
+    '# Title',
+    '',
+    'The model is evaluated in this study.',
+    '',
+    '```python',
+    'revised = True  # code fence should be stripped',
+    '```',
+    '',
+    'See https://example.com/revised-guide for details.',
+    '',
+    'References',
+    '1. Smith J. A revised approach to drying. 2020.',
+    '2. Lee K. Revision of the model. 2021.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  check('preprocess: no revised-family hit from code/URL/references', !hasRule(r, 'revised-family'), JSON.stringify(r.hits.map((h) => h.snippet).slice(0, 3)))
+  check('preprocess: prose words exclude references', r.stats.englishWords < 20, `words=${r.stats.englishWords}`)
+}
+
+console.log('=== 14. stats 与规则同源（transition 计数包含扩展短语）===')
+{
+  // llm-transition-overuse pattern 含 "in today's / when it comes to / a wide range of"，
+  // 旧 countLlTransition 只数 moreover 等 8 个 → stats 应匹配新 pattern
+  const doc = [
+    'Moreover, the method works.',
+    'When it comes to scaling, the approach is robust.',
+    'In today\'s context, the results matter.',
+    'A wide range of applications exist.',
+    'It is worth mentioning that the cost is low.',
+    'In conclusion, we summarize. Furthermore, we extend. Additionally, we verify.',
+  ].join('\n')
+  const r = auditText(doc, { profile: 'manuscript' })
+  // 8 个以上过渡词：pattern 计数应 >= 8（旧实现只数 3 个）
+  check('stats.transitionCount uses rule pattern (>=8)', r.stats.transitionCount >= 8, `transitionCount=${r.stats.transitionCount}`)
 }
 
 console.log('')
