@@ -282,7 +282,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       '传 styleProfile=作者历史风格档案 JSON 开启句长分布漂移检测。' +
       'v0.7：新增中文"的"字修饰链、平均句长（英 ≤18 词/中 ≤25 字）、自黑式免责套话（"基于假数据/模型毫无意义"）与空洞热词密度规则（借鉴 ko5.6sol 文体指南，密度门控避免误伤领域术语）。' +
       'v0.8：传 original 同时开启 Epistemic Lock——主张强度漂移（associated→caused，Yila claim ladder）、否定/零结果标记翻转、scope 边界消失；' +
+      'v1.0：证据状态守恒（reported/observed/measured/estimated/simulated 消失或被替换时核验——"participants reported improvement" 不能变成 "participants improved"）；' +
       '命中带性质标签（INVARIANT/VIOLATION/CANDIDATE/ADVISORY）：INVARIANT=科学不变量被改动，CANDIDATE=防御性候选（可能承担正当边界，勿自动删除）。' +
+      '版本差距过大（全文重写）时自动降级为 version-gap 提示，避免行级对比噪音。' +
       '输入 text 或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。' +
       `（dsh-plugin-writing-guard v${PLUGIN_VERSION}）`,
     parameters: {

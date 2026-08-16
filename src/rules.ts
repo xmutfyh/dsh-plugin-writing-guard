@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '0.9.3'
+export const PLUGIN_VERSION = '1.0.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -390,6 +390,12 @@ const NULL_RESULT_RE = /\b(?:no significant|not significant|no difference|no eff
 /** scope 边界标记（EN + ZH）。消失即提示"可能被泛化"——不自动判错，只要求核验。 */
 const SCOPE_RE = /(?:within this (?:sample|cohort|study|dataset)|in this (?:cohort|study|dataset|experiment|system|setup)|in our (?:experiments?|study|dataset)|under these conditions|under the (?:tested|investigated) conditions|during the (?:study|experiment) period|among participants|for the evaluated datasets?|internally validated|externally validated|for the tested (?:range|conditions)|at the tested (?:temperature|pressure|rates?)|in the investigated (?:system|range)|in the present (?:study|dataset|work)|in the current work|在本研究中|在本样本中|在该队列中|在上述条件下|在研究期间|对于本数据集|在本实验中|在当前工况下|在所研究的|在测试的|在考察的|内部验证|外部验证)/gi
 
+/** v1.0 证据状态标记（Evidence-Status Lock）：事实的"来源状态"——
+ *  reported/observed/measured/implemented/estimated/simulated 等。
+ *  "participants reported improvement" ≠ "participants improved"：
+ *  状态词消失或被替换，说明修改把一种证据来源状态变成了另一种（或直接声称）。 */
+const EVIDENCE_STATUS_RE = /\b(?:reported|self-?reported|self-?report(?:s|ed)?|observed|measured|recorded|detected|visualized|implemented|deployed|installed|estimated|simulated|modelled|modeled|calculated|derived|inferred|obtained)\b/gi
+
 /** 保守子句切分（分析建议：; , while whereas although but and）——v0.9 多主张检测的基础。
  *  "between X and Y / among A, B and C" 等枚举里的 and 用占位符保护，不作为子句边界。 */
 const CLAUSE_SPLIT_RE = /[;,，；]|\b(?:while|whereas|although|but|and)\b/i
@@ -579,14 +585,17 @@ export interface ClaimDrift {
 export interface EpistemicDrift {
   /** 主张沿因果/证据轴移动（up=变强 / down=变弱；任何方向都改变科学结论） */
   claimDrift: ClaimDrift[]
-  /** 否定标记被删除（负/零结果可能被翻转）——子句级 multiset */
+  /** 否定标记被删除（负/零结果可能被翻转）——句子级 multiset */
   negationRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
   /** 否定/零结果标记被引入 */
   negationAdded: Array<{ before: string; after: string; marker: string; sim: number }>
   /** 零结果表述被删除 */
   nullResultRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
-  /** scope 边界消失（主张可能被泛化）——子句级 multiset */
+  /** scope 边界消失（主张可能被泛化）——句子级 multiset */
   scopeRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
+  /** v1.0 证据状态漂移（reported/observed/measured…消失或被替换） */
+  evidenceStatusRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
+  evidenceStatusAdded: Array<{ before: string; after: string; marker: string; sim: number }>
 }
 
 /** v0.9.3：marker multiset diff（Scholarship Lock 的 diffValueLists 思想——次数守恒，不是 boolean） */
@@ -613,11 +622,12 @@ function diffMarkerLists(before: string[], after: string[]): { removed: string[]
 /** v0.9.3：句子级 marker multiset（negation/null/scope 守恒用——句子级 multiset 既防
  *  多主张句漏报（"Z did not improve" 不被 "X was not associated" 的布尔掩盖），
  *  也避免 marker 落在未配对子句时被 clause 配对漏掉） */
-function extractMarkerLists(sentence: string): { negationMarkers: string[]; nullMarkers: string[]; scopeMarkers: string[] } {
+function extractMarkerLists(sentence: string): { negationMarkers: string[]; nullMarkers: string[]; scopeMarkers: string[]; evidenceStatusMarkers: string[] } {
   return {
     negationMarkers: sentence.match(NEGATION_RE) ?? [],
     nullMarkers: sentence.match(NULL_RESULT_RE) ?? [],
     scopeMarkers: sentence.match(SCOPE_RE) ?? [],
+    evidenceStatusMarkers: sentence.match(EVIDENCE_STATUS_RE) ?? [],
   }
 }
 
@@ -634,7 +644,10 @@ function extractMarkerLists(sentence: string): { negationMarkers: string[]; null
  *  - 子句配对 best-match-first（先选最高相似度，达标才 consume，降低漏报）。
  */
 export function diffEpistemic(before: string, after: string): EpistemicDrift {
-  const out: EpistemicDrift = { claimDrift: [], negationRemoved: [], negationAdded: [], nullResultRemoved: [], scopeRemoved: [] }
+  const out: EpistemicDrift = {
+    claimDrift: [], negationRemoved: [], negationAdded: [], nullResultRemoved: [], scopeRemoved: [],
+    evidenceStatusRemoved: [], evidenceStatusAdded: [],
+  }
   const bs = splitSentences(before)
   const as = splitSentences(after)
   const pairs = alignSentences(bs, as)
@@ -712,6 +725,15 @@ export function diffEpistemic(before: string, after: string): EpistemicDrift {
     for (const marker of scp.removed) {
       out.scopeRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
     }
+    // v1.0 证据状态守恒："participants reported improvement" → "participants improved" 是把
+    // 报告状态变成直接声称；observed → estimated 是状态替换——都需要作者核验。
+    const es = diffMarkerLists(bm.evidenceStatusMarkers, am.evidenceStatusMarkers)
+    for (const marker of es.removed) {
+      out.evidenceStatusRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
+    }
+    for (const marker of es.added) {
+      out.evidenceStatusAdded.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
+    }
   }
   return out
 }
@@ -746,6 +768,8 @@ export interface IntegritySummary {
   negationDrift: number
   /** scope 边界消失数 */
   scopeDrift: number
+  /** v1.0 证据状态变化数（reported/observed/measured…） */
+  evidenceStatusDrift: number
 }
 
 export interface Rule {
@@ -2349,6 +2373,43 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
       })
     }
 
+    // v1.0 Evidence-Status Lock：证据来源状态（reported/observed/measured…）守恒。
+    // "participants reported improvement" ≠ "participants improved"——报告≠事实；
+    // observed → estimated 是状态替换，同样改变读者对证据来源的理解。
+    for (const d of ed.evidenceStatusRemoved) {
+      const tier = simTier(d.sim)
+      hits.push({
+        ruleId: 'evidence-status-drift',
+        category: 'claim_calibration',
+        severity: 'medium',
+        confidence: tier.confidence,
+        findingKind: 'invariant',
+        label: `证据状态消失（${d.marker}）——从"${d.marker}"变成直接声称`,
+        paragraphIndex: -1,
+        snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
+        message: `修改后证据来源状态标记（${d.marker}）消失或被替换：例如 "participants reported improvement" 不能变成 "participants improved"——报告/观测/测量≠直接事实。不自动判错，请核验来源状态是否仍准确。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}`,
+        suggestion: '若来源状态未变，恢复状态词（reported/observed/measured…）；状态确实改变时显式说明（如 modelled → observed 需要对应实验证据）。',
+        evidence: { type: 'literature', source: 'Evidence-Bound: source-status distinction KEEP（MIT，见 THIRD_PARTY.md）' },
+        matchText: `epistemic:evidence-status-removed:${d.marker}`,
+      })
+    }
+    for (const d of ed.evidenceStatusAdded) {
+      hits.push({
+        ruleId: 'evidence-status-drift',
+        category: 'claim_calibration',
+        severity: 'medium',
+        confidence: 'medium',
+        findingKind: 'invariant',
+        label: `证据状态被引入（${d.marker}）`,
+        paragraphIndex: -1,
+        snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
+        message: `修改后引入了证据状态标记（${d.marker}）：原句没有来源状态限定，现在有了——核对这是否是作者的意图。`,
+        suggestion: '确认来源状态是作者授权的科学修改；语言润色不应凭空改变证据来源。',
+        evidence: { type: 'literature', source: 'Evidence-Bound: source-status distinction KEEP（MIT，见 THIRD_PARTY.md）' },
+        matchText: `epistemic:evidence-status-added:${d.marker}`,
+      })
+    }
+
     const numTypes = new Set<ScholarshipType>(['number', 'percent', 'pvalue', 'ci'])
     const citTypes = new Set<ScholarshipType>(['cite', 'ref', 'figure', 'table', 'doi'])
     integrity = {
@@ -2363,6 +2424,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
       claimDrift: ed.claimDrift.length,
       negationDrift: ed.negationRemoved.length + ed.negationAdded.length + ed.nullResultRemoved.length,
       scopeDrift: ed.scopeRemoved.length,
+      evidenceStatusDrift: ed.evidenceStatusRemoved.length + ed.evidenceStatusAdded.length,
     }
     }
   }
@@ -2450,6 +2512,7 @@ export function formatReport(report: AuditReport, opts?: { verbose?: boolean }):
     lines.push(`  ${i.claimDrift === 0 ? '✓' : '✗'} 主张强度 ${i.claimDrift === 0 ? '不变' : `漂移 ${i.claimDrift} 处`}`)
     lines.push(`  ${i.negationDrift === 0 ? '✓' : '✗'} 否定/零结果 ${i.negationDrift === 0 ? '不变' : `变化 ${i.negationDrift} 处`}`)
     lines.push(`  ${i.scopeDrift === 0 ? '✓' : '⚠'} scope 边界 ${i.scopeDrift === 0 ? '保持' : `消失 ${i.scopeDrift} 处`}`)
+    lines.push(`  ${i.evidenceStatusDrift === 0 ? '✓' : '⚠'} 证据状态 ${i.evidenceStatusDrift === 0 ? '保持' : `变化 ${i.evidenceStatusDrift} 处`}`)
     lines.push('')
   }
   if (hits.length === 0) return lines.join('\n')
@@ -2546,6 +2609,7 @@ export function rulesBrief(): string {
     '- 否定守恒："No significant association" → "A significant association" 会翻转负/零结果；no/not/did not/without/non-significant 标记删除按 HIGH 报',
     '- 零结果守恒：no significant difference / did not improve / remained unchanged 是数据，不得因削弱叙事而删除',
     '- scope 边界：in this study / under these conditions / 在本研究中… 消失时提示"可能被泛化"——不自动判错，只要求核验',
+    '- 证据状态守恒（v1.0）：reported/observed/measured/implemented/estimated/simulated 等来源状态词消失或被替换时核验——"participants reported improvement" 不能变成 "participants improved"（报告≠事实）；observed → estimated 是状态替换，同样改变读者对证据来源的理解',
     '- 自动守护：DSH 环境中插件自动捕获 write/edit 前的文本（exec.token 键控，并发编辑不串扰），写入后自动跑 Scholarship + Epistemic Lock（自动路径与手动 writing_audit(original=) 同规则）',
     '- 命中性质（findingKind）：INVARIANT（不变量，改即事故）/ VIOLATION（明确违规）/ CANDIDATE（防御性候选或低相似度漂移——cue ≠ verdict，可能承担正当边界，勿自动删除）/ ADVISORY（文体建议）',
     '',

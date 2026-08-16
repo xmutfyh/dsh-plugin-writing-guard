@@ -110,6 +110,10 @@ description: >-
   不得因削弱叙事而删除（负面、零、矛盾结果是 Evidence-Bound 的 KEEP 类）。
 - **scope 边界**：`in this study` / `under these conditions` / `在本研究中` / `内部验证` 等标记
   从同一句中消失 → 核验主张是否被泛化（不自动判错）。
+- **证据状态守恒（v1.0）**：reported/observed/measured/implemented/estimated/simulated 等来源
+  状态词消失或被替换 → 核验："participants reported improvement" 不能变成 "participants
+  improved"（报告≠事实）；"observed rate" → "estimated rate" 是状态替换（观测≠模拟/估算），
+  同样改变读者对证据来源的理解——不自动判错，恢复状态词或显式说明状态改变。
 - **命中性质（findingKind）**：
   - `INVARIANT`（🔴 科学不变量被改动：数字/引用/主张强度/否定/scope）——立即处理；
   - `VIOLATION`（明确违规：修改过程残留、自黑免责）——应当修正；

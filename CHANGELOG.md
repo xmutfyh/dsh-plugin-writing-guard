@@ -4,6 +4,41 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-08-16
+
+### Added — Evidence-Status Lock (Revision Integrity model complete)
+
+The epistemic representation is now the full "scientific commitments" set the 0.9 design review
+called for: causal force, evidential force, modality (hedge), negation, null findings, scope, and
+now **evidence status**. 1.0 = the deterministic delta model is complete:
+
+```
+Scientific tokens        Scientific commitments
+├─ number                ├─ causal force
+├─ statistic             ├─ evidential force
+├─ citation              ├─ modality / hedge
+├─ DOI                   ├─ negation
+└─ figure/table          ├─ null finding
+                         ├─ scope
+                         └─ evidence status (v1.0)
+            ↓ before → aligned claims → after
+            ↓ deterministic delta
+```
+
+- **Evidence-Status Lock** (`evidence-status-drift`, MEDIUM/invariant): sentence-level multiset
+  conservation of source-status markers (reported/self-reported/observed/measured/recorded/
+  detected/visualized/implemented/deployed/installed/estimated/simulated/modelled/calculated/
+  derived/inferred/obtained). "participants reported improvement" → "participants improved"
+  (report-state erased into a direct claim), "observed rate" → "estimated rate" (status swap),
+  and "modelled results" introduced are all flagged for verification — never auto-judged.
+- Integrity regression report gains a sixth line: evidence status.
+- `writing_audit` description and `writing_rules` brief document the new lock.
+
+### Tests
+
+- 204 → 209: reported-removed TP, observed→estimated TP, modelled-introduced TP, unchanged TN,
+  integrity field.
+
 ## [0.9.3] - 2026-08-16
 
 ### Added — epistemic representation precision (0.9.2 评审的 4 个 engine 问题 + ESR 实测发现)

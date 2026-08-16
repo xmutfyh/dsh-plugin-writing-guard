@@ -177,6 +177,32 @@ adapted，署名见 [THIRD_PARTY.md](THIRD_PARTY.md)）与 Evidence-Bound（MIT�
 > 定位（v0.9）：**deterministic manuscript integrity guard**——不是检测"AI 写得像不像人"，
 > 而是检测"AI 在帮科研人员改文字时，有没有悄悄改掉 science"。
 
+## v1.0 Evidence-Status Lock（Revision Integrity 模型收官）
+
+科学承诺（scientific commitments）的确定性 delta 模型补全最后一块：**证据状态**。
+
+```
+Scientific tokens          Scientific commitments
+├─ number                  ├─ causal force
+├─ statistic               ├─ evidential force
+├─ citation                ├─ modality / hedge
+├─ DOI                     ├─ negation
+└─ figure/table            ├─ null finding
+                          ├─ scope
+                          └─ evidence status (v1.0)
+              ↓ before → aligned claims → after
+              ↓ deterministic delta
+```
+
+| 能力 | 检测什么 | 例子 |
+|---|---|---|
+| **证据状态守恒** 🟠 | reported/observed/measured/implemented/estimated/simulated 等来源状态词消失或被替换 | `participants reported improvement` → `participants improved`（报告→直接声称）；`observed rate` → `estimated rate`（状态替换）——都要求核验，不自动判错 |
+| **完整性回归第 6 行** | 报告尾部回归块新增"证据状态"行 | ✓ 保持 / ⚠ 变化 N 处 |
+
+> 至此双锁覆盖：数字、引用、主张因果力/证据力、hedge、否定/零结果、scope、证据状态——
+> **Scholarship Lock = token multiset integrity；Epistemic Lock = semantic-marker multiset
+> integrity**（v0.9.2 评审架构落地）。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——
@@ -316,7 +342,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 204 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护回归）
+npm test   # 自动先 build 再跑 209 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

@@ -1154,6 +1154,44 @@ console.log('=== 63. v0.9.3 版本差距过大降级保护（ESR 实测发现）
   check('version-gap: local revision still locked', !hasRule(local, 'version-gap') && hasRule(local, 'claim-drift'))
 }
 
+console.log('=== 64. v1.0 证据状态守恒（Evidence-Status Lock）===')
+{
+  // "participants reported improvement" → "participants improved"：报告状态消失
+  const r1 = auditText(
+    'Participants improved after the intervention.',
+    { profile: 'manuscript', original: 'Participants reported improvement after the intervention.' },
+  )
+  check('evidence-status TP (reported removed)', hasRule(r1, 'evidence-status-drift'), JSON.stringify(r1.hits.map((h) => h.snippet)))
+
+  // 状态替换：observed → estimated（模型/观测混淆）
+  const r2 = auditText(
+    'The estimated rate was 2.1 m/h under these conditions.',
+    { profile: 'manuscript', original: 'The observed rate was 2.1 m/h under these conditions.' },
+  )
+  check('evidence-status TP (observed → estimated)', hasRule(r2, 'evidence-status-drift'), JSON.stringify(r2.hits.map((h) => h.snippet)))
+
+  // 状态引入
+  const r3 = auditText(
+    'The modelled results suggest a decline.',
+    { profile: 'manuscript', original: 'The results suggest a decline.' },
+  )
+  check('evidence-status TP (modelled introduced)', hasRule(r3, 'evidence-status-drift'), JSON.stringify(r3.hits.map((h) => h.snippet)))
+
+  // TN：状态保持
+  const tn = auditText(
+    'The measured pressure drop decreased with temperature in this study.',
+    { profile: 'manuscript', original: 'The measured pressure drop decreased with temperature in this study.' },
+  )
+  check('evidence-status TN (unchanged)', !hasRule(tn, 'evidence-status-drift'), JSON.stringify(tn.hits.map((h) => h.ruleId)))
+
+  // integrity 摘要包含证据状态
+  const int = auditText(
+    'Participants improved after the intervention.',
+    { profile: 'manuscript', original: 'Participants reported improvement after the intervention.' },
+  )
+  check('integrity.evidenceStatusDrift > 0', (int.integrity?.evidenceStatusDrift ?? 0) > 0, JSON.stringify(int.integrity))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {
