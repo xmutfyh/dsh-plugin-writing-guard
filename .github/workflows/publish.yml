@@ -21,7 +21,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
-      # 发布前先确认包名未被占用（dsh-plugin-writing-guard 目前 404 空闲）
+      # 发布 npm 包；版本号取自 package.json（由 v* tag 触发）
       - run: pnpm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

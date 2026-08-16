@@ -4,6 +4,18 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-16
+
+### Fixed
+
+- **Scholarship Lock duplicate-entity diff**: `diffScholarship` now uses multiset diff instead of `Set`-based diff, so changing one occurrence among repeated identical values (e.g. two `5 mm` → one `5 mm` + one `6 mm`) is correctly reported as `5 mm → 6 mm`, and removing one duplicate citation is reported as a removal.
+- **Config robustness**: `projectResidueTerms: undefined` in plugin config no longer crashes `apply()`; it now falls back to the default project term list.
+- **Docs/security metadata**: `SECURITY.md` now lists `0.6.x` as supported; publish workflow comment no longer claims the npm package name is still unclaimed.
+
+### Tests
+
+- 134 → 136 assertions: duplicate-number change and duplicate citation removal cases for Scholarship Lock.
+
 ## [0.6.0] - 2026-08-15
 
 ### Added — Academic-writing quality guard (position upgrade)

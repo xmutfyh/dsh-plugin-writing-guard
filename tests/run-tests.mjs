@@ -775,6 +775,12 @@ console.log('=== 45. v0.6 工具函数：句子切分 / 相似度 / profile ==='
 
   const d = diffScholarship('accuracy 87.3% and p < 0.05 and \\cite{a} and Table 1', 'accuracy 89.1% and p < 0.05 and \\cite{a} and Table 1')
   check('diffScholarship pairs percent change', d.changed.some((c) => c.type === 'percent' && c.before === '87.3%' && c.after === '89.1%'), JSON.stringify(d.changed))
+
+  const dup = diffScholarship('lengths 5 mm and 5 mm', 'lengths 5 mm and 6 mm')
+  check('diffScholarship pairs duplicate-number change', dup.changed.some((c) => c.type === 'number' && c.before === '5 mm' && c.after === '6 mm'), JSON.stringify(dup.changed))
+
+  const dupRemoved = diffScholarship('\\cite{a} and \\cite{a}', '\\cite{a}')
+  check('diffScholarship reports duplicate citation removal', dupRemoved.removed.some((r) => r.type === 'cite' && r.value === '\\cite{a}'), JSON.stringify(dupRemoved.removed))
 }
 
 console.log('')

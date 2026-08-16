@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "DSH plugin: deterministic academic-writing quality guard — Scholarship Lock (protects numbers/citations during polishing), defensive-saturation density, overlong sentence & clause stacking, restatement-loop, author style profile, incremental lint, segment-pipeline preprocessing, document-profile-aware scanning with confidence/evidence; writing_audit + writing_rules + writing_style_profile tools",
   "type": "module",
   "main": "lib/index.js",

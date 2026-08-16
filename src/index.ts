@@ -197,7 +197,7 @@ export { isPaperFile }
 
 export function apply(ctx: Context, config: Partial<Config> = {}): void {
   const cfg = { ...DEFAULT_CONFIG, ...config }
-  const projectTerms = [...new Set([...DEFAULT_PROJECT_TERMS, ...cfg.projectResidueTerms])]
+  const projectTerms = [...new Set([...DEFAULT_PROJECT_TERMS, ...(cfg.projectResidueTerms ?? [])])]
   // v0.5：mode 预设（显式 autoAuditMinSeverity 优先）
   const minSeverity: Severity = cfg.mode && !config.autoAuditMinSeverity
     ? MODE_MIN_SEVERITY[cfg.mode]

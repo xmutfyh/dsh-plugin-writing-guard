@@ -36,7 +36,7 @@ export type Severity = 'high' | 'medium' | 'low'
 export type Confidence = 'high' | 'medium' | 'low'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '0.6.0'
+export const PLUGIN_VERSION = '0.6.1'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -266,6 +266,38 @@ export interface ScholarshipDiff {
   added: ScholarshipEntity[]
 }
 
+/**
+ * 多重集差异：按出现次数而不是集合去重，避免“两个相同数值中改掉一个”
+ * 被漏报（例如 before 有 5 mm、5 mm，after 有 5 mm、6 mm，应报 5 mm → 6 mm）。
+ * 返回值保留原顺序，便于数值类实体按顺序配对。
+ */
+function diffValueLists(beforeValues: string[], afterValues: string[]): { removed: string[]; added: string[] } {
+  const bCounts = new Map<string, number>()
+  const aCounts = new Map<string, number>()
+  for (const v of beforeValues) bCounts.set(v, (bCounts.get(v) ?? 0) + 1)
+  for (const v of afterValues) aCounts.set(v, (aCounts.get(v) ?? 0) + 1)
+
+  const removed = beforeValues.filter((v) => {
+    const bCount = bCounts.get(v) ?? 0
+    const aCount = aCounts.get(v) ?? 0
+    if (bCount > aCount) {
+      bCounts.set(v, bCount - 1)
+      return true
+    }
+    return false
+  })
+  const added = afterValues.filter((v) => {
+    const aCount = aCounts.get(v) ?? 0
+    const bCount = bCounts.get(v) ?? 0
+    if (aCount > bCount) {
+      aCounts.set(v, aCount - 1)
+      return true
+    }
+    return false
+  })
+  return { removed, added }
+}
+
 /** v0.6 Scholarship Lock：对比修改前后的科研事实（数字/引用/图表编号/DOI） */
 export function diffScholarship(before: string, after: string): ScholarshipDiff {
   const changed: ScholarshipChange[] = []
@@ -275,10 +307,7 @@ export function diffScholarship(before: string, after: string): ScholarshipDiff 
   for (const t of types) {
     const bv = extractScholarshipEntities(before).filter((e) => e.type === t).map((e) => e.value)
     const av = extractScholarshipEntities(after).filter((e) => e.type === t).map((e) => e.value)
-    const bSet = new Set(bv)
-    const aSet = new Set(av)
-    const rm = bv.filter((v) => !aSet.has(v))
-    const ad = av.filter((v) => !bSet.has(v))
+    const { removed: rm, added: ad } = diffValueLists(bv, av)
     // 数值类实体按顺序配对为 changed（如 87.3% → 89.1%）
     if (t === 'number' || t === 'percent' || t === 'pvalue' || t === 'ci') {
       const n = Math.min(rm.length, ad.length)
