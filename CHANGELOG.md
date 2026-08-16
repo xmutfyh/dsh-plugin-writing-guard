@@ -4,6 +4,41 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-08-16
+
+### Added — epistemic representation precision (0.9.2 评审的 4 个 engine 问题 + ESR 实测发现)
+
+- **Evidential role disambiguation (P0)**: `EVIDENTIAL_LADDER` now applies per-marker context
+  role checks — "Figure 4 shows the model architecture" (descriptive), "a baseline is established"
+  (procedural), "confirm configuration/identity/setup" (procedural), "the model demonstrates
+  capability" (descriptive) no longer count as epistemic force. Real epistemic drifts
+  ("results show" → "results indicate", "well established") still fire.
+- **Hedge as independent modality (P0)**: `ClaimSpan.hedged` / `hedgeMarkers` split from the
+  evidential integer — "may suggest" → "suggest" (verb level 1→1, hedged true→false) is now
+  detected as evidence-force strengthening; hedge introduction detected as weakening.
+- **Sentence-level marker multiset for negation/null/scope (P1)**: boolean conservation replaced
+  with `diffMarkerLists` multiset conservation (Scholarship Lock's diffValueLists idea) — in
+  "X was not associated with Y, and Z did not improve" → "…and Z improved", the "did not" marker
+  is removed even though the first clause keeps a negation; partial scope removal
+  ("in this cohort, under these conditions…" → "in this cohort…") is detected.
+- **Best-match-first clause pairing (P1)**: before-clauses now pick the highest-similarity
+  unmatched after-clause within the ±1 window and only then consume it — a low-sim positional
+  pair no longer steals the target from a genuinely corresponding clause.
+- **Version-gap guard (ESR audit finding)**: when sentence alignment rate < 20% (full-rewrite
+  level differences, e.g. the ESR 研究进展0 → V05 FINAL pair at 3.7%), line-level Scholarship/
+  Epistemic locks are skipped and a single `version-gap` advisory is reported instead of
+  hundreds of misalignment noise hits ("60 d → 5.5 mol", 171 fake citation changes).
+- **Causal ladder verb-base fix**: effect/causation rungs now include base forms
+  (improve/reduce/increase/modify/influence/promote/enhance/accelerate/attenuate/cause…) that
+  were previously missed ("did not improve" no longer reads as a bare 0→4 causal drift).
+- Claim-drift hits no longer skip the negation/scope conservation checks on the same clause.
+
+### Tests
+
+- 190 → 204: evidential role TN/TP (Figure/establish/confirm/results/well-established), hedge
+  removal/introduction, multi-claim negation multiset, partial scope removal, version-gap guard
+  (noise suppression + local-revision unaffected).
+
 ## [0.9.2] - 2026-08-16
 
 ### Fixed (both discovered by auditing `pore_scale_revised_model_marked_v2`)

@@ -1057,6 +1057,103 @@ console.log('=== 59. v0.9.2 Markdown 引用块不破坏句子切分 ===')
   check('splitSentences splits across blockquote markers', sents.length === 3, JSON.stringify(sents))
 }
 
+console.log('=== 60. v0.9.3 证据力角色排除（Figure shows / establish baseline ≠ epistemic）===')
+{
+  // "Figure 4 shows the model architecture" 是展示性描述，不是 epistemic claim
+  const fig = auditText(
+    'Figure 4 presents the model architecture.',
+    { profile: 'manuscript', original: 'Figure 4 shows the model architecture.' },
+  )
+  check('evidential role TN (Figure shows → presents)', !hasRule(fig, 'claim-drift'), JSON.stringify(fig.hits.map((h) => h.snippet)))
+
+  // "establish a baseline" 是程序性建立
+  const bl = auditText(
+    'A baseline was defined for each fold.',
+    { profile: 'manuscript', original: 'A baseline was established for each fold.' },
+  )
+  check('evidential role TN (establish a baseline)', !hasRule(bl, 'claim-drift'), JSON.stringify(bl.hits.map((h) => h.snippet)))
+
+  // "confirm receipt" 是程序性确认
+  const cfg = auditText(
+    'The system confirmed the configuration.',
+    { profile: 'manuscript', original: 'The system confirmed the setup.' },
+  )
+  check('evidential role TN (confirm configuration)', !hasRule(cfg, 'claim-drift'), JSON.stringify(cfg.hits.map((h) => h.snippet)))
+
+  // 真正的证据力漂移仍报：results show → results indicate
+  const evi = auditText(
+    'The results indicate that X causes Y.',
+    { profile: 'manuscript', original: 'The results show that X causes Y.' },
+  )
+  check('evidential role TP (results show → indicate)', hasRule(evi, 'claim-drift'), JSON.stringify(evi.hits.map((h) => h.snippet)))
+
+  // "It is well established that" 仍是 epistemic
+  const well = auditText(
+    'It is well established that X causes Y.',
+    { profile: 'manuscript', original: 'It is widely believed that X causes Y.' },
+  )
+  check('evidential role TP (well established claim)', hasRule(well, 'claim-drift'), JSON.stringify(well.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 61. v0.9.3 hedge 独立字段（may suggest ≠ suggest）===')
+{
+  // 动词层相同（1→1），但 hedge 移除 —— 以前检测不到
+  const h1 = auditText(
+    'The findings suggest X.',
+    { profile: 'manuscript', original: 'The findings may suggest X.' },
+  )
+  check('hedge removal TP (may suggest → suggest)', hasRule(h1, 'claim-drift'), JSON.stringify(h1.hits.map((h) => h.snippet)))
+
+  // hedge 保留 + 动词升级：may suggest → may indicate（1→2）
+  const h2 = auditText(
+    'The findings may indicate X.',
+    { profile: 'manuscript', original: 'The findings may suggest X.' },
+  )
+  check('evidential verb drift with hedge kept (suggest→indicate)', hasRule(h2, 'claim-drift'), JSON.stringify(h2.hits.map((h) => h.snippet)))
+
+  // 引入 hedge 也报（削弱）
+  const h3 = auditText(
+    'The findings may suggest X.',
+    { profile: 'manuscript', original: 'The findings suggest X.' },
+  )
+  check('hedge introduction TP (suggest → may suggest)', hasRule(h3, 'claim-drift'), JSON.stringify(h3.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 62. v0.9.3 句子级 marker multiset（多主张句不再被布尔掩盖）===')
+{
+  // 旧逻辑：前半句 "not associated" 保留 → negation=true→true 漏报；multiset 按完整 marker 计数 → "did not" 消失被检出
+  const multi = auditText(
+    'X was not associated with Y, and Z improved.',
+    { profile: 'manuscript', original: 'X was not associated with Y, and Z did not improve.' },
+  )
+  check('null-result multiset TP (Z did not improve removed)', hasRule(multi, 'negation-drift'), JSON.stringify(multi.hits.map((h) => h.snippet)))
+
+  // scope 部分消失：两个 marker 中 "under these conditions" 没了
+  const scope = auditText(
+    'In this cohort, X was associated with Y.',
+    { profile: 'manuscript', original: 'In this cohort, under these conditions, X was associated with Y.' },
+  )
+  check('scope multiset TP (under these conditions removed)', hasRule(scope, 'scope-drift'), JSON.stringify(scope.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 63. v0.9.3 版本差距过大降级保护（ESR 实测发现）===')
+{
+  // 全文重写级别差异：行级双锁跳过，只报一条 version-gap（不再输出 171 条噪音）
+  const before = 'The first study examined drying kinetics in a porous micromodel under three temperatures. The second study focused on salt precipitation and its effect on permeability evolution. A third line of work considered capillary-driven transport in heterogeneous structures.'
+  const after = 'This review synthesizes evidence on fracture self-sealing in caprocks during CO2 geological storage. We organize the literature into four functional levels of sealing recovery. The central question concerns when healing becomes functional closure across scales.'
+  const r = auditText(after, { profile: 'manuscript', original: before })
+  check('version-gap hit fired', hasRule(r, 'version-gap'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+  check('version-gap: no scholarship-lock noise', !hasRule(r, 'scholarship-lock'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+  check('version-gap: no claim-drift noise', !hasRule(r, 'claim-drift'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+
+  // 局部修订（高对齐率）不受影响
+  const local = auditText(
+    'The intervention caused lower mortality.',
+    { profile: 'manuscript', original: 'The intervention was associated with lower mortality.' },
+  )
+  check('version-gap: local revision still locked', !hasRule(local, 'version-gap') && hasRule(local, 'claim-drift'))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

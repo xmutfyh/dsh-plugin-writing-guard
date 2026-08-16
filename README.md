@@ -177,6 +177,19 @@ adapted，署名见 [THIRD_PARTY.md](THIRD_PARTY.md)）与 Evidence-Bound（MIT�
 > 定位（v0.9）：**deterministic manuscript integrity guard**——不是检测"AI 写得像不像人"，
 > 而是检测"AI 在帮科研人员改文字时，有没有悄悄改掉 science"。
 
+## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
+
+> 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——
+> 每次真实论文测试都直接产出一个 patch 版本：
+
+| 版本 | 真实论文 | 发现并修复 |
+|---|---|---|
+| v0.9.1 | pore-scale 论文 | "a baseline (M1) is established" 误报——establish+基建名词是"建立"不是"证明" |
+| v0.9.2 | pore-scale 论文 | 子句重排导致位置配对错配（引文子句↔正文子句）→ clause cosine ≥0.3 门槛；Markdown 引用块 `>` 破坏句子切分 → 先剥 blockquote 标记 |
+| v0.9.3 | ESR 中文综述 + 0.9.2 评审 | 证据力角色排除（Figure shows / establish baseline / confirm config ≠ epistemic）；hedge 独立字段（may suggest ≠ suggest 可检出）；否定/零结果/scope 句子级 marker multiset（多主张句不再被布尔掩盖）；best-match-first 子句配对；**版本差距过大降级保护**（对齐率 <20% 时跳过行级双锁——ESR 两版全文重写对齐率仅 3.7%，原来会输出 171 条假引用变化）；因果动词原形补全（improve/reduce/cause…） |
+
+测试 190 → 204 项。这套"真实论文 → regression case → 修规则"的迭代是插件的核心开发方式。
+
 ## 密度阈值（v0.3.3）
 
 频率规则采用 **每千语言单位** 密度：英文规则按英文词数、中文规则按 CJK 字数（双语文件不互相稀释），
@@ -303,7 +316,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 170 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark 回归）
+npm test   # 自动先 build 再跑 204 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。
