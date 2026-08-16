@@ -81,7 +81,7 @@ const DEFAULT_PROJECT_TERMS = ['source_map', 'reader 锚点', 'iteration_log', '
 // ---------- v0.5 incremental lint 状态持久化 ----------
 
 /** 指纹算法版本：指纹规则变化时递增，旧 state 清空重建（防止升级后制造假 resolved+added） */
-const FINGERPRINT_VERSION = 6
+const FINGERPRINT_VERSION = 7
 // 插件版本单点定义在 src/rules.ts 的 PLUGIN_VERSION（state 标记与工具描述共用，避免多处硬编码漂移）
 
 interface StateFileShape {

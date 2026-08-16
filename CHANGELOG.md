@@ -4,6 +4,32 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-08-16
+
+### Added — claim identity in fingerprints + unpaired inventory (1.2.2 评审 9.55/10 的三项)
+
+- **Epistemic fingerprints carry claim identity (P0)**: `Hit` gains a `fingerprintKey` field,
+  separate from the display `matchText`. Epistemic events now fingerprint on a lightweight
+  `claimAnchor` (subject + content tokens, zero-NLP: "The intervention was associated with
+  mortality" → `intervention|associated|mortality`) — two different claims undergoing the exact
+  same association→causation drift no longer share a fingerprint, so the incremental auto-audit
+  treats the second claim's change as **new**. Fingerprints use a deterministic FNV-1a hash of
+  the full key (no more `slice(0, 60)` truncation collisions). `FINGERPRINT_VERSION` 6 → 7.
+- **Global Scholarship Inventory uses unpaired multiset (P0/P1)**: new `diffScholarshipInventory`
+  performs raw multiset conservation with **no pairing** — in a version-gap, "5 mg → 6 mg" is
+  reported as "带单位数值：移除 1 / 新增 1" instead of vanishing into a `changed` pair that the
+  removed/added-only counter missed. Iterates all `ScholarshipType`s (number/percent/pvalue/ci/
+  cite/ref/figure/table/doi) so the inventory can't drift from the engine's entity set.
+- **Unified marker-event confidence (P1)**: `markerEventTier(sim, positionalFallback)` is now
+  shared by added and removed directions — "how sure we are this is the same claim" no longer
+  depends on the change direction. Positional-fallback events below 0.55 sim are `candidate`
+  (not hard-coded `invariant`), consistent with the removed side.
+
+### Tests
+
+- 240 → 246: same-drift-on-different-claims distinct fingerprints + diffAudit-new + stability,
+  unpaired inventory counts number replacement (and pvalue coverage), fallback added→candidate.
+
 ## [1.2.2] - 2026-08-16
 
 ### Fixed — automatic Guard delivery (1.2.1 评审 P0×2 + P1×2 + P1/P2)

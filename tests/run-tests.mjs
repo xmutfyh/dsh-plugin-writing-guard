@@ -1411,6 +1411,49 @@ console.log('=== 77. v1.2.2 SCOPE lastIndex + version-gap inventory ===')
   check('version-gap includes global inventory', gh && gh.snippet.includes('全局科研实体变化'), gh?.snippet?.slice(0, 200))
 }
 
+console.log('=== 78. v1.2.3 Epistemic 指纹带 claim identity（同 drift 不同 claim 不碰撞）===')
+{
+  // 分析最优先场景：两个不同 claim 发生完全相同的 association→causation
+  const a = auditText('Treatment A caused mortality.', { profile: 'manuscript', original: 'Treatment A was associated with mortality.' })
+  const b = auditText('Treatment B caused mortality.', { profile: 'manuscript', original: 'Treatment B was associated with mortality.' })
+  const ha = a.hits.find((h) => h.ruleId === 'claim-drift')
+  const hb = b.hits.find((h) => h.ruleId === 'claim-drift')
+  const fpa = hitFingerprint(ha)
+  const fpb = hitFingerprint(hb)
+  check('same drift on different claims → distinct fingerprints', ha && hb && fpa !== fpb, `${fpa} vs ${fpb}`)
+
+  // 第二个事件必须是 new（diffAudit 不折叠）
+  const diff = diffAudit(new Set([fpa]), [hb])
+  check('diffAudit treats claim-B drift as new', diff.added.length === 1, JSON.stringify(diff.added.map((h) => hitFingerprint(h))))
+
+  // 同一个 claim 的相同 drift 仍稳定（指纹可复现）
+  const a2 = auditText('Treatment A caused mortality.', { profile: 'manuscript', original: 'Treatment A was associated with mortality.' })
+  check('same claim drift fingerprint stable', hitFingerprint(a2.hits.find((h) => h.ruleId === 'claim-drift')) === fpa)
+}
+
+console.log('=== 79. v1.2.3 inventory 用 unpaired multiset（数值替换不再漏）===')
+{
+  // version-gap 场景下 5 mg→6 mg 属于"移除 6 / 新增 1"，不因被配成 changed 而消失
+  const before = 'A = 5 mg. B = 10 mg. C = 15 mg. D = 20 mg. E = 25 mg. F = 30 mg.'
+  const after = '6 mg was reported in the revised analysis.'
+  const gap = auditText(after, { profile: 'manuscript', original: before })
+  const gh = gap.hits.find((h) => h.ruleId === 'version-gap')
+  check('inventory counts number replacement', gh && gh.snippet.includes('带单位数值：移除 6 / 新增 1'), gh?.snippet?.slice(0, 200))
+
+  // 全类型遍历：pvalue 类型也进清单
+  const gap2 = auditText('The revised analysis reports p < 0.01.', { profile: 'manuscript', original: 'A = 5 mg. B = 10 mg. C = 15 mg. D = 20 mg. E = 25 mg. F = 30 mg.' })
+  const gh2 = gap2.hits.find((h) => h.ruleId === 'version-gap')
+  check('inventory covers pvalue type', gh2 && gh2.snippet.includes('p 值'), gh2?.snippet?.slice(0, 200))
+}
+
+console.log('=== 80. v1.2.3 fallback added/removed 统一可信度（位置兜底低相似 → candidate）===')
+{
+  // 短文档位置兜底 + 低真实相似度：added 事件也降为 candidate（不再写死 invariant）
+  const r = auditText('Z did not improve.', { profile: 'manuscript', original: 'Z improved.' })
+  const h = r.hits.find((x) => x.ruleId === 'negation-drift')
+  check('fallback added event is candidate at low sim', h && h.findingKind === 'candidate', JSON.stringify(h && [h.findingKind, h.snippet]))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

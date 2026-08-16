@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.2.2'
+export const PLUGIN_VERSION = '1.2.3'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -334,6 +334,22 @@ export function diffScholarship(before: string, after: string): ScholarshipDiff 
     }
   }
   return { changed, removed, added }
+}
+
+/** v1.2.3：Global Scholarship Inventory——raw multiset conservation，完全不 pairing。
+ *  大版本对比时不声称 "5 mg → 6 mg" 是一一对应（顺序配对在全文重写下不可靠），
+ *  只报"移除 N / 新增 M"。遍历全部 ScholarshipType（number/percent/pvalue/ci/
+ *  cite/ref/figure/table/doi），避免手写清单与 engine 分叉。 */
+export function diffScholarshipInventory(before: string, after: string): Record<ScholarshipType, { removed: number; added: number }> {
+  const out = {} as Record<ScholarshipType, { removed: number; added: number }>
+  const types: ScholarshipType[] = ['number', 'percent', 'pvalue', 'ci', 'cite', 'ref', 'figure', 'table', 'doi']
+  for (const t of types) {
+    const bv = extractScholarshipEntities(before).filter((e) => e.type === t).map((e) => e.value)
+    const av = extractScholarshipEntities(after).filter((e) => e.type === t).map((e) => e.value)
+    const { removed, added } = diffValueLists(bv, av)
+    out[t] = { removed: removed.length, added: added.length }
+  }
+  return out
 }
 
 const SCHOLARSHIP_TYPE_LABEL: Record<ScholarshipType, string> = {
@@ -956,6 +972,18 @@ export function simTier(sim: number): { confidence: Confidence; severity: Severi
   return { confidence: 'low', severity: 'medium', kind: 'candidate' }
 }
 
+/** v1.2.3：marker 事件可信度统一模型——added/removed 共用（"我们有多确定这是同一个 claim"
+ *  不应因变化方向而异）：
+ *  - 正常对齐 + sim ≥0.55 → invariant
+ *  - 正常对齐 <0.55 → candidate
+ *  - 位置兜底 + sim ≥0.55 → invariant
+ *  - 位置兜底 + sim <0.55 → candidate（低可信，明示"短文本位置兜底"） */
+function markerEventTier(sim: number, positionalFallback?: boolean): { confidence: Confidence; kind: FindingKind } {
+  if (positionalFallback && sim < 0.55) return { confidence: 'low', kind: 'candidate' }
+  const t = simTier(sim)
+  return { confidence: t.confidence, kind: t.kind }
+}
+
 
 /** v0.8 findingKind 推导（缺省语义；invariant 类在代码中显式标注） */
 export function resolveFindingKind(rule: Pick<Rule, 'findingKind' | 'severity' | 'category'>): FindingKind {
@@ -1057,6 +1085,10 @@ export interface Hit {
   density?: { count: number; perK: number }
   /** v0.5.2：命中原文（段落级规则填充），用于稳定指纹——同段其他文字编辑不影响指纹 */
   matchText?: string
+  /** v1.2.3：事件级指纹 key（integrity 事件携带 claim identity，如
+   *  `claim:causal:1>5:treatment-a|mortality`）——与展示用 matchText 分离，
+   *  增量审计用 fingerprintKey 判"新问题"，同类型漂移发生在不同 claim 上不碰撞 */
+  fingerprintKey?: string
 }
 
 export interface Stats {
@@ -1813,6 +1845,36 @@ export function filterReport(report: AuditReport, minSeverity: Severity): AuditR
 // v0.5 incremental lint：指纹与增量 diff（"新增 1 / 解决 4 / 仍存在 8"）
 // ---------------------------------------------------------------------------
 
+/** v1.2.3：FNV-1a 32-bit hash（无依赖）——指纹用完整事件 key 的确定性 hash，
+ *  避免 slice(0,60) 截断导致长 claim anchor 的碰撞 */
+export function fnv1a(str: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/**
+ * v1.2.3：轻量 claim anchor（无 NLP）——subject + 内容 token：
+ *  "The intervention was associated with mortality" → intervention|associated|mortality。
+ *  fingerprint 用它区分"不同 claim 上发生的相同 drift"（Treatment A 与 Treatment B
+ *  都发生 association→causation 时，指纹不再碰撞）。
+ */
+function claimAnchor(clause: string): string {
+  const subj = clauseSubject(clause)
+  const toks = clause.toLowerCase().match(/[a-z][a-z'-]*/g) ?? []
+  const content: string[] = []
+  for (const t of toks) {
+    if (CLAUSE_SUBJECT_STOP.has(t) || SIM_STOP.has(t)) continue
+    if (content.includes(t) || content.length >= 4) continue
+    content.push(t)
+  }
+  const parts = [subj, ...content].filter(Boolean)
+  return parts.join('|') || '?'
+}
+
 /**
  * v1.2.2：稳定指纹——显式区分 aggregate 与 event 两类。
  *  - aggregate（真正全文统计类：density/section/风格漂移）：每文件每种规则最多一个，
@@ -1848,11 +1910,13 @@ export function hitFingerprint(h: Hit): string {
   if (AGGREGATE_RULE_IDS.has(h.ruleId)) {
     return `aggregate::${h.ruleId}`
   }
-  const core = (h.matchText ?? '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 60)
-  if (core) {
-    return `${h.ruleId}::${core}`
+  // v1.2.3：fingerprintKey 优先（Epistemic 事件带 claim identity：ruleId::hash(claim anchor)）；
+  // 其余用 matchText（Scholarship 的 matchText 已含实体 identity）。FNV hash 避免截断碰撞。
+  const key = (h.fingerprintKey ?? h.matchText ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+  if (key) {
+    return `${h.ruleId}::${fnv1a(key)}`
   }
-  // 非白名单且无 matchText 的全文统计级命中（罕见）：退化为 aggregate 语义
+  // 非白名单且无 key 的全文统计级命中（罕见）：退化为 aggregate 语义
   return `aggregate::${h.ruleId}`
 }
 
@@ -2460,17 +2524,16 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     const alignRate = (2 * alignedCount) / Math.max(1, bSents.length + aSents.length)
     if (alignRate < 0.2) {
       // v1.2.2：version-gap 时行级配对跳过（会造假 pairing），但 Global Scholarship
-      // Inventory（全文级确定性 multiset）仍计算——只给 citation/DOI/Figure/Table 的
-      // removed/added 计数摘要，不做逐条"5 mg → 7 mg"式配对。
-      const gd = diffScholarship(opts.original, view.raw)
-      const invCount = (t: ScholarshipType): string => {
-        const rm = gd.removed.filter((r) => r.type === t).length
-        const ad = gd.added.filter((a) => a.type === t).length
-        if (rm === 0 && ad === 0) return ''
-        return `${SCHOLARSHIP_TYPE_LABEL[t]}：移除 ${rm} / 新增 ${ad}；`
-      }
-      const inventory =
-        invCount('cite') + invCount('doi') + invCount('figure') + invCount('table') + invCount('number') + invCount('percent')
+      // Inventory（全文级确定性 multiset）仍计算——只给各实体类型的 removed/added 计数
+      // 摘要，不做逐条"5 mg → 7 mg"式配对。
+      // v1.2.3：改用 diffScholarshipInventory（完全不 pairing）——"5 mg→6 mg" 这类
+      // 数值替换不再漏报（diffScholarship 会把它们配成 changed，从 removed/added 消失）；
+      // 遍历全部 ScholarshipType，不再手写六个。
+      const inv = diffScholarshipInventory(opts.original, view.raw)
+      const invText = (Object.keys(inv) as ScholarshipType[])
+        .filter((t) => inv[t].removed > 0 || inv[t].added > 0)
+        .map((t) => `${SCHOLARSHIP_TYPE_LABEL[t]}：移除 ${inv[t].removed} / 新增 ${inv[t].added}`)
+        .join('；')
       hits.push({
         ruleId: 'version-gap',
         category: 'claim_calibration',
@@ -2479,8 +2542,8 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         findingKind: 'advisory',
         label: '版本差距过大，行级完整性对比已跳过（全局科研实体清单见下）',
         paragraphIndex: -1,
-        snippet: `（版本对比）句子对齐率 ${(alignRate * 100).toFixed(1)}%（${alignedCount}/${Math.min(bSents.length, aSents.length)} 句）。全局科研实体变化：${inventory || '无'}（不做行级配对——跨全文大版本时顺序配对不可靠）`,
-        message: '修改前后版本差异过大（全文重写级别），句子级 Scholarship/Epistemic Lock 的行级对比不可靠，已自动跳过；全局科研实体清单（引用/DOI/图表编号/数字的移除与新增计数）仍然计算，供人工核对结构级差异。',
+        snippet: `（版本对比）句子对齐率 ${(alignRate * 100).toFixed(1)}%（${alignedCount}/${Math.min(bSents.length, aSents.length)} 句）。全局科研实体变化：${invText || '无'}（不做行级配对——跨全文大版本时顺序配对不可靠）`,
+        message: '修改前后版本差异过大（全文重写级别），句子级 Scholarship/Epistemic Lock 的行级对比不可靠，已自动跳过；全局科研实体清单（引用/DOI/图表编号/数字等全类型的移除与新增计数）仍然计算，供人工核对结构级差异。',
         suggestion: '如需逐条数值对比，请提供更接近的中间版本，或逐章/逐节对比。',
         evidence: { type: 'heuristic' },
         matchText: 'version-gap',
@@ -2572,14 +2635,15 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: `恢复原主张${axis}（"${d.beforeWord}"），除非作者显式授权修改科学结论。`,
         evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills claim-strength ladder（Apache-2.0，adapted，见 THIRD_PARTY.md）' },
         matchText: `epistemic:claim:${d.axis}:${d.levelBefore}->${d.levelAfter}`,
+        fingerprintKey: `claim:${d.axis}:${d.levelBefore}>${d.levelAfter}:${claimAnchor(d.before)}`,
       })
     }
     for (const d of ed.negationRemoved) {
-      const tier = simTier(d.sim)
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'negation-drift',
         category: 'claim_calibration',
-        severity: tier.severity,
+        severity: tier.kind === 'invariant' ? 'high' : 'medium',
         confidence: tier.confidence,
         findingKind: tier.kind,
         label: `否定标记被删除（${d.marker}）——负/零结果可能被翻转`,
@@ -2589,15 +2653,17 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '恢复否定标记；如科学结论确实改变，需作者显式授权并同步修改数字/统计量。',
         evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills invariant checker（adapted）' },
         matchText: `epistemic:negation-removed:${d.marker}`,
+        fingerprintKey: `negation:removed:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
     for (const d of ed.negationAdded) {
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'negation-drift',
         category: 'claim_calibration',
-        severity: 'medium',
-        confidence: 'medium',
-        findingKind: 'invariant',
+        severity: tier.kind === 'invariant' ? 'medium' : 'low',
+        confidence: tier.confidence,
+        findingKind: tier.kind,
         label: `否定标记被引入（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
@@ -2605,16 +2671,18 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '确认否定是作者授权的科学修改；语言润色不应凭空加入否定。',
         evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills invariant checker（adapted）' },
         matchText: `epistemic:negation-added:${d.marker}`,
+        fingerprintKey: `negation:added:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
     // v1.2：零结果表述被引入（独立事件）
     for (const d of ed.nullResultAdded) {
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'negation-drift',
         category: 'claim_calibration',
-        severity: 'medium',
-        confidence: 'medium',
-        findingKind: 'invariant',
+        severity: tier.kind === 'invariant' ? 'medium' : 'low',
+        confidence: tier.confidence,
+        findingKind: tier.kind,
         label: `零结果表述被引入（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
@@ -2622,6 +2690,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '确认零结果是作者授权的科学修改；语言润色不应凭空加入阴性结果。',
         evidence: { type: 'literature', source: 'Evidence-Bound: negative/null findings are data（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:null-added:${d.marker}`,
+        fingerprintKey: `null:added:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
     // v1.2：alignment-uncertain——含受保护 markers 的未配对主张（不假定 commitments 被保留）
@@ -2639,14 +2708,15 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '在修改后文本中定位该主张；若被删除或重写，确认是否是有意的科学变化。',
         evidence: { type: 'heuristic' },
         matchText: `epistemic:alignment-uncertain:${d.markers.join('|')}`,
+        fingerprintKey: `alignment-uncertain:${claimAnchor(d.before)}`,
       })
     }
     for (const d of ed.nullResultRemoved) {
-      const tier = simTier(d.sim)
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'negation-drift',
         category: 'claim_calibration',
-        severity: tier.severity,
+        severity: tier.kind === 'invariant' ? 'high' : 'medium',
         confidence: tier.confidence,
         findingKind: tier.kind,
         label: `零结果表述被删除（${d.marker}）`,
@@ -2656,14 +2726,15 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '恢复零结果表述；负面、零、矛盾结果必须保留。',
         evidence: { type: 'literature', source: 'Evidence-Bound: negative/null findings are data（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:null-result-removed:${d.marker}`,
+        fingerprintKey: `null:removed:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
     for (const d of ed.scopeRemoved) {
-      const tier = simTier(d.sim)
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'scope-drift',
         category: 'claim_calibration',
-        severity: tier.severity === 'high' ? 'medium' : tier.severity,
+        severity: tier.kind === 'invariant' ? 'medium' : 'low',
         confidence: tier.confidence,
         findingKind: tier.kind,
         label: `scope 边界消失（${d.marker}）`,
@@ -2673,16 +2744,18 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '若范围未变，恢复边界标记；若确实外推，需要新的证据与作者授权。',
         evidence: { type: 'literature', source: 'Evidence-Bound: scope conditions KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:scope-removed:${d.marker}`,
+        fingerprintKey: `scope:removed:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
     // v1.1：scope 新增（主张可能被缩窄——外部有效性悄悄收窄同样是科学变化）
     for (const d of ed.scopeAdded) {
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'scope-drift',
         category: 'claim_calibration',
         severity: 'low',
-        confidence: 'medium',
-        findingKind: 'invariant',
+        confidence: tier.confidence,
+        findingKind: tier.kind,
         label: `scope 边界被引入（${d.marker}）——主张可能被缩窄`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
@@ -2690,6 +2763,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '若范围确未改变，删除新增边界；若作者有意缩窄声明范围，显式确认。',
         evidence: { type: 'literature', source: 'Evidence-Bound: scope conditions KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:scope-added:${d.marker}`,
+        fingerprintKey: `scope:added:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
 
@@ -2697,13 +2771,13 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     // "participants reported improvement" ≠ "participants improved"——报告≠事实；
     // observed → estimated 是状态替换，同样改变读者对证据来源的理解。
     for (const d of ed.evidenceStatusRemoved) {
-      const tier = simTier(d.sim)
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'evidence-status-drift',
         category: 'claim_calibration',
-        severity: 'medium',
+        severity: tier.kind === 'invariant' ? 'medium' : 'low',
         confidence: tier.confidence,
-        findingKind: 'invariant',
+        findingKind: tier.kind,
         label: `证据状态消失（${d.marker}）——从"${d.marker}"变成直接声称`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
@@ -2711,15 +2785,17 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '若来源状态未变，恢复状态词（reported/observed/measured…）；状态确实改变时显式说明（如 modelled → observed 需要对应实验证据）。',
         evidence: { type: 'literature', source: 'Evidence-Bound: source-status distinction KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:evidence-status-removed:${d.marker}`,
+        fingerprintKey: `evidence-status:removed:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
     for (const d of ed.evidenceStatusAdded) {
+      const tier = markerEventTier(d.sim, d.positionalFallback)
       hits.push({
         ruleId: 'evidence-status-drift',
         category: 'claim_calibration',
-        severity: 'medium',
-        confidence: 'medium',
-        findingKind: 'invariant',
+        severity: tier.kind === 'invariant' ? 'medium' : 'low',
+        confidence: tier.confidence,
+        findingKind: tier.kind,
         label: `证据状态被引入（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
@@ -2727,6 +2803,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         suggestion: '确认来源状态是作者授权的科学修改；语言润色不应凭空改变证据来源。',
         evidence: { type: 'literature', source: 'Evidence-Bound: source-status distinction KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:evidence-status-added:${d.marker}`,
+        fingerprintKey: `evidence-status:added:${canonicalMarker(d.marker)}:${claimAnchor(d.before)}`,
       })
     }
 

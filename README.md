@@ -257,6 +257,16 @@ Scientific tokens          Scientific commitments
 
 测试 233 → 240 项。
 
+## v1.2.3 claim identity 指纹 + unpaired inventory（1.2.2 评审 9.55/10 的三项）
+
+| 能力 | 实现 |
+|---|---|
+| **Epistemic 指纹带 claim identity** 🔴 | `Hit.fingerprintKey` 与展示用 matchText 分离；`claimAnchor`（subject+内容 token，零 NLP）进指纹——**两个不同 claim 发生完全相同的 association→causation 不再碰撞**，第二个始终被增量审计当 new；FNV-1a hash 消除截断碰撞（`FINGERPRINT_VERSION` 6→7） |
+| **inventory 不配对 multiset** 🔴 | 新 `diffScholarshipInventory` 纯 multiset 守恒——version-gap 下 `5 mg→6 mg` 报"移除 6 / 新增 1"而非被 changed 配对吞掉；遍历全部 9 类 ScholarshipType（不再手写清单） |
+| **marker 事件统一可信度** 🟡 | `markerEventTier(sim, fallback)` added/removed 共用——"多确定是同一个 claim"不因变化方向而异；位置兜底低相似 → candidate（不再写死 invariant） |
+
+测试 240 → 246 项。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——
@@ -396,7 +406,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 240 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 event-level/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
+npm test   # 自动先 build 再跑 246 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 claim-identity/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+不配对全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。
