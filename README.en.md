@@ -131,6 +131,23 @@ Position upgrade: from an "AI-style linter" to a guard that **protects research 
 
 > Principle (v0.6 design review): never write rules for a specific model (GPT-5.6 style, Opus style — models change, behaviors don't); evidence-based hedging is correct academic expression, this tool is not an "anti-hedge" tool.
 
+## v1.3 Document-structure layer (paragraph rhythm → citation integrity)
+
+Not another AI-buzzword list — the next gain is judging **whether the whole document is written too
+neatly**. Seven new deterministic/statistical rules (zero network):
+
+| rule | principle | findingKind |
+|---|---|---|
+| **`paragraph-rhythm`** 🔴 | one aggregate computes: one-sentence paragraph ratio (fragmentation), paragraph-length CV + long outliers (congestion), runs of ≥3 paragraphs within ±15% of the median (over-uniform). Uses prose-only paragraphs — layout lines (bold titles, images, table residue, author lines) never count as fragmentation | advisory |
+| **`sentence-rhythm-uniformity`** 🔴 | runs of ≥3 consecutive sentences within ±15% of the paragraph's local median, repeated in ≥2 paragraphs → over-uniform rhythm; with an author `styleProfile`, current std < 60% of historical std also flags — **adaptive threshold**: profile → compare to history; no profile → conservative heuristic | advisory |
+| **`repeated-discourse-scaffold`** 🔴 | paragraphs are abstracted to enumeration signatures (First→Second→Finally = `1-2-4`, 第一→第二→第三 = `1-2-3`, 从X层面→从Y层面 = `P-P-P`); the same signature in ≥2 independent paragraphs → templated structure. A single enumeration is fine | candidate |
+| **`punctuation-scaffold-overload`** | ≥3 structural punctuation classes (parentheses/colon/semicolon/quote/em-dash) concentrated in one sentence; exempts standard definition lists (`1) RMSE: ...; ...`, `(a)(b)(c)` figure panels, `Level-2 (unseen-combination): ...`) | candidate |
+| **`coined-framework-language`** | form-based, not word-list: A-B-C dash frameworks ("input—process—output"), ≥2 distinct XX化/XX力 in one paragraph, ≥3 distinct XX性 (可持续性/系统性 alone are legitimate terms), XX闭环/赋能机制 | candidate |
+| **`generic-claim-candidate`** | multiple weak signals must co-occur (≥2 abstract nouns + no entity/number/citation + no method verb + universal template), ≥3 signals; EN+ZH | candidate + low |
+| **`summary-cliche-positional`** | no new word list — the same closing cliché (综上所述 / in conclusion) appearing at the end of ≥2 sections | advisory |
+| **`local-citation-integrity`** 🔴 | zero-network deterministic: `\cite{key}` exists in `.bib`, `\ref` has a matching `\label`, bib entries missing title/year/author, one DOI mapped to several keys; manual and auto-audit both probe a sibling `.bib`; "does this citation support this claim" stays outside the plugin boundary | violation/advisory |
+| **StyleProfile → rhythm fingerprint** | adds `sentenceLengthCV`/`shortSentenceRatio`/`longSentenceRatio`/`paragraphLengthStd`/`paragraphLengthCV` (backward compatible) | — |
+
 ## Density thresholds (v0.3.3)
 
 Frequency rules use **per-1000-language-unit** density: English rules are normalized by English

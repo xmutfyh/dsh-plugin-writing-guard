@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.2.3'
+export const PLUGIN_VERSION = '1.3.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -185,7 +185,7 @@ function evidenceTokens(sentence: string): Set<string> {
   return new Set(hits.map((t) => t.toLowerCase()))
 }
 
-/** v0.6 作者风格档案（从作者历史论文统计；零 LLM） */
+/** v0.6 作者风格档案（从作者历史论文统计；零 LLM）——v1.3 升级为"节奏指纹" */
 export interface StyleProfile {
   /** 句长中位数（词/字合计） */
   sentenceLengthMedian: number
@@ -199,9 +199,24 @@ export interface StyleProfile {
   hedgePerK: number
   /** 连接词密度（/千词） */
   connectivePerK: number
+  // ---- v1.3 节奏指纹（新增字段；旧 profile JSON 缺省时按 0/undefined 处理）----
+  /** 句长变异系数 CV = std/mean（v1.3；越小越"整齐"） */
+  sentenceLengthCV?: number
+  /** 短句比例（英文 <12 词 / 中文 <15 字；v1.3） */
+  shortSentenceRatio?: number
+  /** 长句比例（英文 >35 词 / 中文 >80 字；v1.3） */
+  longSentenceRatio?: number
+  /** 段长标准差（v1.3） */
+  paragraphLengthStd?: number
+  /** 段长变异系数（v1.3；越小段越均匀） */
+  paragraphLengthCV?: number
 }
 
-/** 从文本计算风格指标（作者历史或当前稿件皆可） */
+/** 短句/长句阈值（词/字合计）——与 overlong-sentence 的极端阈值互补 */
+const SHORT_SENTENCE_LIMIT = 12
+const LONG_SENTENCE_LIMIT = 35
+
+/** 从文本计算风格指标（作者历史或当前稿件皆可）——v1.3 增加节奏指纹字段 */
 export function computeStyleProfile(text: string): StyleProfile {
   const sentences = splitSentences(text)
   const lens = sentences.map((s) => countWords(s))
@@ -214,13 +229,24 @@ export function computeStyleProfile(text: string): StyleProfile {
   const hedgeRe = /\b(may|might|could|possibly|potentially|perhaps)\b/gi
   const connRe = /\b(moreover|furthermore|additionally|however|therefore|thus|consequently|in addition)\b/gi
   const emRe = /(——|—|–—)/g
+  const sMean = lens.length > 0 ? lens.reduce((a, b) => a + b, 0) / lens.length : 0
+  const sStd = stdOf(lens)
+  const pMean = paraLens.length > 0 ? paraLens.reduce((a, b) => a + b, 0) / paraLens.length : 0
+  const pStd = stdOf(paraLens)
+  const round2 = (n: number): number => Math.round(n * 100) / 100
   return {
     sentenceLengthMedian: medianOf(lens),
-    sentenceLengthStd: Math.round(stdOf(lens) * 100) / 100,
+    sentenceLengthStd: round2(sStd),
     paragraphLengthMedian: medianOf(paraLens),
     emDashPerK: perK((text.match(emRe) ?? []).length),
     hedgePerK: perK((text.match(hedgeRe) ?? []).length),
     connectivePerK: perK((text.match(connRe) ?? []).length),
+    // v1.3 节奏指纹
+    sentenceLengthCV: sMean > 0 ? round2(sStd / sMean) : 0,
+    shortSentenceRatio: lens.length > 0 ? round2(lens.filter((n) => n < SHORT_SENTENCE_LIMIT).length / lens.length) : 0,
+    longSentenceRatio: lens.length > 0 ? round2(lens.filter((n) => n > LONG_SENTENCE_LIMIT).length / lens.length) : 0,
+    paragraphLengthStd: round2(pStd),
+    paragraphLengthCV: pMean > 0 ? round2(pStd / pMean) : 0,
   }
 }
 
@@ -1063,6 +1089,23 @@ export interface Rule {
    * 需要偏离默认语义的规则显式声明（如 invariant 类规则在代码中直接标注）。
    */
   findingKind?: FindingKind
+  // ---------- v1.3 篇章统计层（局部规则 → 篇章统计 → 科学完整性）----------
+  /** v1.3：段落节奏规则（碎片化/拥塞/过度整齐；aggregate 统计，不走 regex 扫描） */
+  paragraphRhythm?: boolean
+  /** v1.3：句长节奏均匀规则（局部 run + 历史 std 对比；adaptive threshold） */
+  sentenceRhythm?: boolean
+  /** v1.3：重复逻辑脚手架（跨段落"首先其次最后/第一第二第三/First Second Third"签名复用） */
+  scaffoldRepeat?: boolean
+  /** v1.3：标点脚手架过载（括号/冒号/分号/引号/破折号组合聚集） */
+  punctuationOverload?: boolean
+  /** v1.3：自创框架词（XX化/XX力/A-B-C 短线框架；形式规则，全 candidate） */
+  coinedFramework?: boolean
+  /** v1.3：正确但空泛（多弱信号组合才报；candidate + low） */
+  genericClaim?: boolean
+  /** v1.3：本地引用完整性（\cite key ↔ .bib、\ref ↔ \label；零网络确定性检查） */
+  citationIntegrity?: boolean
+  /** v1.3：总结套话位置感知——同一套话在每个小节末尾都出现（不新增词表，位置驱动） */
+  summaryPositional?: boolean
 }
 
 export interface Hit {
@@ -1760,6 +1803,121 @@ const RULES: Rule[] = [
     evidence: { type: 'literature', source: 'ko5.6sol 词表（空洞抽象热词）' },
     note: '领域敏感规则：地学/工程文献中"机制/耦合/动态"出现频繁属正常，阈值按每千字 3 次设高门槛，低于阈值不报。',
   },
+
+  // ================= v1.3 篇章统计层（第10轮评审：局部规则 → 篇章统计 → 科学完整性）=================
+  {
+    id: 'paragraph-rhythm',
+    category: 'academic_style',
+    severity: 'low',
+    confidence: 'low',
+    label: '段落节奏（碎片化 / 拥塞 / 过度整齐）',
+    pattern: /(.)/,
+    paragraphRhythm: true,
+    message: '段落节奏异常：连续一句成段（碎片化）、少数段落远高于自身段长分布（拥塞）或连续多段长度几乎相同（过度整齐）。',
+    suggestion: '按"一个完整论证单元"划分段落：长段按独立问题拆分，碎片段合并到相邻论证，避免按固定字数切段。',
+    languages: ['zh', 'en'],
+    evidence: { type: 'style-guide', source: 'GPT-5.6 Sol 论文写作破绽精简整合版 #9（段落划分机械）' },
+    findingKind: 'advisory',
+  },
+  {
+    id: 'sentence-rhythm-uniformity',
+    category: 'academic_style',
+    severity: 'low',
+    confidence: 'low',
+    label: '句长节奏过度均匀（variance 过小 + 连续发生）',
+    pattern: /(.)/,
+    sentenceRhythm: true,
+    message: '连续多句长度落在局部中位数附近的小范围内，且跨多个段落重复；或当前句长标准差明显低于作者历史（写得过于整齐）。句长应随信息密度自然变化。',
+    suggestion: '长句只在确有复杂逻辑关系时保留，一个句子只承担一个主要判断；让句长随信息密度自然变化，不要刻意制造整齐或碎句。',
+    languages: ['zh', 'en'],
+    evidence: { type: 'style-guide', source: 'GPT-5.6 Sol 论文写作破绽精简整合版 #1（句长分布过于整齐）' },
+    findingKind: 'advisory',
+  },
+  {
+    id: 'repeated-discourse-scaffold',
+    category: 'rhetorical_pattern',
+    severity: 'medium',
+    confidence: 'low',
+    label: '重复使用相同逻辑脚手架（首先其次最后 / 第一第二第三 / First Second Third）',
+    pattern: /(.)/,
+    scaffoldRepeat: true,
+    message: '多个独立段落重复使用同一种枚举逻辑骨架（首先→其次→最后 / 第一→第二→第三 / First→Second→Third）。单次列举正常，跨段落机械复用会使文章呈现模板化结构。',
+    suggestion: '根据内容关系选择最自然的组织方式：有并列关系才列举，有因果关系直接写因果，有主次关系重点展开；不要每一段都长成同一种"标准答案"结构。',
+    languages: ['zh', 'en'],
+    evidence: { type: 'style-guide', source: 'GPT-5.6 Sol 论文写作破绽精简整合版 #2（逻辑结构过度模板化）' },
+    findingKind: 'candidate',
+  },
+  {
+    id: 'punctuation-scaffold-overload',
+    category: 'formatting',
+    severity: 'low',
+    confidence: 'low',
+    label: '标点脚手架过载（括号/冒号/分号/引号/破折号组合聚集）',
+    pattern: /(.)/,
+    punctuationOverload: true,
+    message: '同一句/段内连续使用多种标点（括号补定义 → 冒号顶解释 → 分号列要点 → 引号包装概念 → 破折号补充说明）：用标点承担了本应由句法和段落完成的逻辑组织。',
+    suggestion: '把重要例子直接写进句子（"关注员工的薪酬、晋升等需求"），把解释写成独立短句；分号连续 ≥2 次时拆句。',
+    languages: ['zh', 'en'],
+    evidence: { type: 'style-guide', source: 'GPT-5.6 Sol 论文写作破绽精简整合版 #7（标点和补充说明使用过密）' },
+    findingKind: 'candidate',
+  },
+  {
+    id: 'coined-framework-language',
+    category: 'llm_associated',
+    severity: 'low',
+    confidence: 'low',
+    label: '自创框架词/组合词（XX化/XX力/A-B-C 短线框架）',
+    pattern: /(.)/,
+    coinedFramework: true,
+    message: '检测到"看起来像高级术语"的生产性造词（XX化/XX力/XX性/闭环/A-B-C 短线框架）。这些词并非天然错误，但常被当作成熟术语使用而缺乏理论来源与定义。',
+    suggestion: '先问：是不是该领域已有术语？如果不是，能否用普通准确的词表达？若必须自定义，给出清晰定义和使用边界；"输入—处理—输出"类短线框架尽量改写成正常句法。',
+    languages: ['zh', 'en'],
+    evidence: { type: 'style-guide', source: 'GPT-5.6 Sol 论文写作破绽精简整合版 #8（自创高级框架词）' },
+    findingKind: 'candidate',
+  },
+  {
+    id: 'generic-claim-candidate',
+    category: 'claim_calibration',
+    severity: 'low',
+    confidence: 'low',
+    label: '正确但空泛的判断（多弱信号组合）',
+    pattern: /(.)/,
+    genericClaim: true,
+    message: '句子同时满足多个空泛弱信号（抽象名词堆叠、无实体/数值/引用/方法动作、命中万能句型），语法正确但缺少对象、机制、证据或具体判断。',
+    suggestion: '优先回答：具体是什么问题？出现在哪里？为什么？对哪个变量/结果有什么影响？有什么数据、文献或案例支持？本文真正新增的判断是什么？',
+    languages: ['zh', 'en'],
+    evidence: { type: 'style-guide', source: 'GPT-5.6 Sol 论文写作破绽精简整合版 #4（正确但没有信息量）' },
+    findingKind: 'candidate',
+  },
+  {
+    id: 'summary-cliche-positional',
+    category: 'llm_associated',
+    severity: 'low',
+    confidence: 'low',
+    label: '总结套话位置感知（每个小节末尾都出现）',
+    pattern: /(.)/,
+    summaryPositional: true,
+    message: '同一类总结套话（综上所述/总而言之/in conclusion 等）在每个小节末尾反复出现——位置固定比次数更能体现模板化收尾。',
+    suggestion: '如果前文逻辑已经完成，不必强行再写一句总结；需要承接下一段时，直接写真正的新判断，而不是用套话重复上一段。',
+    languages: ['zh', 'en'],
+    evidence: { type: 'style-guide', source: 'GPT-5.6 Sol 论文写作破绽精简整合版 #3（机械使用总结套话）' },
+    findingKind: 'advisory',
+  },
+  {
+    id: 'local-citation-integrity',
+    category: 'claim_calibration',
+    severity: 'medium',
+    confidence: 'high',
+    label: '本地引用完整性（\\cite key ↔ .bib / \\ref ↔ \\label）',
+    pattern: /(.)/,
+    citationIntegrity: true,
+    message: '检测到 \\cite 引用的 key 在 .bib 中不存在、\\ref 无对应 \\label、bib 条目缺 title/year/author 或同一 DOI 对应多个 key。',
+    suggestion: '补齐 .bib 条目或修正 \\cite key；确保 \\ref 与 \\label 一一对应；同一 DOI 只保留一个 key。',
+    languages: ['zh', 'en'],
+    evidence: { type: 'heuristic' },
+    note: '仅当 .bib 内容随调用提供时启用（writing_audit 的 filePath 参数会自动探测同目录 .bib）。',
+    findingKind: 'violation',
+  },
 ]
 
 // ---------------------------------------------------------------------------
@@ -1904,6 +2062,9 @@ const AGGREGATE_RULE_IDS = new Set([
   'connective-overuse',
   'limitations-across-sections',
   'style-profile-drift',
+  // v1.3 篇章统计层（全文统计级，指纹必须稳定）
+  'paragraph-rhythm',
+  'sentence-rhythm-uniformity',
 ])
 
 export function hitFingerprint(h: Hit): string {
@@ -2201,6 +2362,8 @@ export interface AuditOptions {
   original?: string
   /** v0.6 Author Style Profile：作者历史风格档案（writing_style_profile 生成）；提供时检测句长分布漂移 */
   styleProfile?: StyleProfile
+  /** v1.3 本地引用完整性：.bib 文件内容（与 filePath 同目录自动探测）；提供时启用 local-citation-integrity */
+  bibText?: string
 }
 
 export interface RestatementLoop {
@@ -2242,6 +2405,500 @@ export function findRestatementLoops(text: string, max: number): RestatementLoop
   return out
 }
 
+// ---------------------------------------------------------------------------
+// v1.3 篇章统计层：段落节奏 / 句长节奏 / 逻辑脚手架 / 标点脚手架 / 框架词 /
+// 空泛判断 / 引用完整性（第10轮评审：局部规则 → 篇章统计 → 科学完整性）
+// ---------------------------------------------------------------------------
+
+/**
+ * v1.3 段落节奏信号（aggregate 统计，一次计算多个信号）：
+ *  - singletonRatio：一句话成段的段落比例（碎片化）
+ *  - lengthMedian/lengthStd/lengthCV：段长分布
+ *  - longOutlierRatio：远高于自身分布的长段比例（拥塞）
+ *  - nearEqualRunCount：连续 ≥3 段长度在局部中位数 ±15% 内的 run 数（过度整齐）
+ */
+export interface ParagraphRhythmSignals {
+  total: number
+  singletonCount: number
+  singletonRatio: number
+  lengthMedian: number
+  lengthStd: number
+  lengthCV: number
+  longOutlierCount: number
+  longOutlierRatio: number
+  nearEqualRunCount: number
+}
+
+/** 连续 N 段长度"太接近"的判定窗口（段数） */
+const NEAR_EQUAL_RUN_MIN = 3
+/** 局部中位数 ± 容差比例 */
+const NEAR_EQUAL_TOL = 0.15
+/** 拥塞长段：长度 > 全局中位数 × 该倍数 */
+const LONG_OUTLIER_MULT = 2.5
+/** 一句成段：段内句子数 == 1 */
+const SINGLETON_SENTENCES = 1
+
+export function analyzeParagraphRhythm(paragraphs: string[]): ParagraphRhythmSignals {
+  const lens = paragraphs.map((p) => countWords(p.trim()))
+  const total = lens.length
+  if (total === 0) {
+    return { total: 0, singletonCount: 0, singletonRatio: 0, lengthMedian: 0, lengthStd: 0, lengthCV: 0, longOutlierCount: 0, longOutlierRatio: 0, nearEqualRunCount: 0 }
+  }
+  const singletonCount = paragraphs.filter((p) => splitSentences(p).length === SINGLETON_SENTENCES).length
+  const median = medianOf(lens)
+  const std = stdOf(lens)
+  const mean = lens.reduce((a, b) => a + b, 0) / total
+  const longOutlierCount = lens.filter((n) => median > 0 && n > median * LONG_OUTLIER_MULT).length
+  // 连续段长 run：每段与下一段长度差都在局部中位数 ±15% 内
+  let nearEqualRunCount = 0
+  if (total >= NEAR_EQUAL_RUN_MIN) {
+    let run = 1
+    for (let i = 1; i < total; i++) {
+      const lo = median * (1 - NEAR_EQUAL_TOL)
+      const hi = median * (1 + NEAR_EQUAL_TOL)
+      const within = (n: number): boolean => n >= lo && n <= hi
+      if (within(lens[i]) && within(lens[i - 1])) {
+        run += 1
+        if (run >= NEAR_EQUAL_RUN_MIN) {
+          nearEqualRunCount += 1
+          run = 1 // 每个 run 计一次后重置（重叠 run 只报一次）
+        }
+      } else {
+        run = 1
+      }
+    }
+  }
+  return {
+    total,
+    singletonCount,
+    singletonRatio: total > 0 ? Math.round((singletonCount / total) * 1000) / 1000 : 0,
+    lengthMedian: median,
+    lengthStd: Math.round(std * 100) / 100,
+    lengthCV: mean > 0 ? Math.round((std / mean) * 1000) / 1000 : 0,
+    longOutlierCount,
+    longOutlierRatio: total > 0 ? Math.round((longOutlierCount / total) * 1000) / 1000 : 0,
+    nearEqualRunCount,
+  }
+}
+
+/** v1.3 段落节奏判定阈值（无作者 profile 时的 conservative heuristic） */
+const PARAGRAPH_RHYTHM_GATES = {
+  /** 碎片化：一句成段比例 ≥ 该值 且 数量 ≥ 该值 */
+  singletonRatioMin: 0.35,
+  singletonCountMin: 3,
+  /** 拥塞：长段 outlier 比例 ≥ 该值 且 数量 ≥ 该值 */
+  outlierRatioMin: 0.15,
+  outlierCountMin: 2,
+  /** 过度整齐：连续等长 run 数 ≥ 该值 */
+  nearEqualRunMin: 2,
+} as const
+
+/**
+ * v1.3 句长节奏均匀：段落内连续 ≥3 句长度落在局部中位数 ±15% 内 → 记一个 run；
+ * 全文出现 ≥2 个 run（跨段落重复）→ 判定"节奏过于均匀"。
+ * styleProfile 存在时优先用作者历史 std 对比（adaptive threshold：当前 std 明显低于历史 → 整齐）。
+ */
+export interface SentenceRhythmSignals {
+  totalSentences: number
+  runCount: number          // 局部均匀 run 数
+  std: number               // 全文句长 std
+  cv: number                // 全文句长 CV
+  authorStd?: number        // 作者历史 std（有 styleProfile 时）
+  authorCv?: number
+  uniformByRun: boolean
+  uniformVsAuthor: boolean
+}
+
+const SENTENCE_RUN_MIN = 3
+const SENTENCE_RUN_TOL = 0.15
+/** 当前 std 低于作者历史 std 的比例阈值（明显更整齐） */
+const AUTHOR_STD_RATIO = 0.6
+
+export function analyzeSentenceRhythm(paragraphs: string[], styleProfile?: StyleProfile): SentenceRhythmSignals {
+  const allLens: number[] = []
+  let runCount = 0
+  for (const para of paragraphs) {
+    const lens = splitSentences(para).map((s) => countWords(s))
+    if (lens.length < SENTENCE_RUN_MIN) continue
+    allLens.push(...lens)
+    const med = medianOf(lens)
+    const lo = med * (1 - SENTENCE_RUN_TOL)
+    const hi = med * (1 + SENTENCE_RUN_TOL)
+    let run = 1
+    for (let i = 1; i < lens.length; i++) {
+      const within = (n: number): boolean => n >= lo && n <= hi
+      if (within(lens[i]) && within(lens[i - 1])) {
+        run += 1
+        if (run >= SENTENCE_RUN_MIN) {
+          runCount += 1
+          run = 1
+        }
+      } else {
+        run = 1
+      }
+    }
+  }
+  const std = stdOf(allLens)
+  const mean = allLens.length > 0 ? allLens.reduce((a, b) => a + b, 0) / allLens.length : 0
+  const cv = mean > 0 ? std / mean : 0
+  const authorStd = styleProfile?.sentenceLengthStd
+  const authorCv = styleProfile?.sentenceLengthCV
+  return {
+    totalSentences: allLens.length,
+    runCount,
+    std: Math.round(std * 100) / 100,
+    cv: Math.round(cv * 1000) / 1000,
+    authorStd,
+    authorCv,
+    uniformByRun: runCount >= 2,
+    uniformVsAuthor: !!authorStd && authorStd > 0 && std < authorStd * AUTHOR_STD_RATIO,
+  }
+}
+
+/**
+ * v1.3 重复逻辑脚手架：段落抽象成枚举签名（首先→其次→最后 / 第一→第二→第三 /
+ * First→Second→Third / 从X层面→从Y层面→从Z层面），同一签名出现在 ≥2 个不同段落 → 模板化。
+ */
+const SCAFFOLD_ENUM: Array<{ re: RegExp; sig: string }> = [
+  // 中文枚举（词边界：后跟标点/空白/句末）
+  { re: /(?:首先|其一|第一)(?=[，,、。;；:\s])/g, sig: '1' },
+  { re: /(?:其次|其二|第二)(?=[，,、。;；:\s])/g, sig: '2' },
+  { re: /(?:再次|其三|第三)(?=[，,、。;；:\s])/g, sig: '3' },
+  { re: /(?:最后|其四|第四|终)(?=[，,、。;；:\s])/g, sig: '4' },
+  // 中文"从X层面"（从制度层面/从执行层面/从效果层面；不要求后随标点，靠 ≥2 个不同实例成脚手架）
+  { re: /从[^，。;；\s]{1,12}(?:层面|角度|视角)/g, sig: 'P' },
+  // 英文枚举
+  { re: /\b(?:first|firstly|one)\b(?=[,，\s:])/gi, sig: '1' },
+  { re: /\b(?:second|secondly|two)\b(?=[,，\s:])/gi, sig: '2' },
+  { re: /\b(?:third|thirdly|three)\b(?=[,，\s:])/gi, sig: '3' },
+  { re: /\b(?:fourth|fourthly|finally|last(?:ly)?)\b(?=[,，\s:])/gi, sig: '4' },
+]
+
+/** 段落 → 枚举签名（如 "1-2-3"、"1-2-4"、"P-P-P"）；不足 2 个枚举返回 null */
+export function scaffoldSignature(paragraph: string): string | null {
+  const found: Array<{ idx: number; sig: string; text: string }> = []
+  for (const { re, sig } of SCAFFOLD_ENUM) {
+    re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(paragraph)) !== null) {
+      found.push({ idx: m.index, sig, text: m[0] })
+      re.lastIndex = m.index + 1 // 同一枚举词多次出现都记位置
+    }
+  }
+  found.sort((a, b) => a.idx - b.idx)
+  const sig = found.map((f) => f.sig).join('-')
+  // 至少 2 个枚举标记才算"脚手架"；纯重复同一标记不算（"第一…第一…"是并列强调不是枚举）
+  const distinctSigs = new Set(found.map((f) => f.sig))
+  const distinctTexts = new Set(found.map((f) => f.text))
+  const valid = found.length >= 2 && (distinctSigs.size >= 2 || distinctTexts.size >= 2)
+  return valid ? sig : null
+}
+
+/** v1.3 跨段落重复脚手架检测：签名 → 段落数；≥2 段用同一签名 → 报 */
+export function findRepeatedScaffolds(paragraphs: string[]): Array<{ signature: string; count: number }> {
+  const sigCount = new Map<string, number>()
+  for (const p of paragraphs) {
+    const sig = scaffoldSignature(p)
+    if (sig) sigCount.set(sig, (sigCount.get(sig) ?? 0) + 1)
+  }
+  return [...sigCount.entries()]
+    .filter(([, c]) => c >= 2)
+    .map(([signature, count]) => ({ signature, count }))
+    .sort((a, b) => b.count - a.count)
+}
+
+/**
+ * v1.3 标点脚手架过载：同一句内出现 ≥3 类不同"结构标点"
+ * （括号/冒号/分号/引号/破折号）→ 用标点承担句法组织的信号。
+ * 括号类排除单字母形式（(a)(b)(c) 图注/列表是学术规范，不算聚集）。
+ */
+const STRUCTURAL_PUNC_CLASSES: RegExp[] = [
+  /[（(][^)）]{2,}[)）]/g,  // 括号（内容 ≥2 字符；(a)(b) 单字母图注不算）
+  /[：:]/g,         // 冒号
+  /[；;]/g,         // 分号
+  /[“”"「」『』]/g, // 引号
+  /(——|—|–)/g,     // 破折号
+]
+const PUNC_OVERLOAD_MIN_CLASSES = 3
+/** 符号定义列表（1) 术语(缩写): 定义; 补充 / 2) Level-2 (unseen-combination): ...）是论文方法章标准格式，不报 */
+const DEF_LIST_RE = /^\s*(?:\d+\)?|\([a-z]\)|[a-z]\))\s*[A-Za-z0-9][\w\s\-/²]{1,40}\([A-Za-z0-9²\-]{1,24}\)\s*:/i
+
+export function findPunctuationOverloads(paragraphs: string[]): Array<{ paraIndex: number; classes: number; snippet: string }> {
+  const out: Array<{ paraIndex: number; classes: number; snippet: string }> = []
+  for (let pi = 0; pi < paragraphs.length && out.length < 3; pi++) {
+    for (const s of splitSentences(paragraphs[pi])) {
+      if (DEF_LIST_RE.test(s)) continue
+      let classes = 0
+      for (const re of STRUCTURAL_PUNC_CLASSES) {
+        re.lastIndex = 0
+        if (re.test(s)) classes += 1
+      }
+      if (classes >= PUNC_OVERLOAD_MIN_CLASSES) {
+        out.push({ paraIndex: pi, classes, snippet: s.slice(0, 160) })
+        break // 每段最多报 1 句
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * v1.3 自创框架词/组合词（形式规则，不依赖具体词表）：
+ *  - A-B-C 中文短线框架："输入—处理—输出"、"问题-原因-对策"
+ *  - 连续多个"XX化 / XX力 / XX性"（同一段 ≥2 个不同实例）
+ *  - "XX闭环 / XX赋能机制 / XX体系"
+ * 全部 candidate（"可持续性""系统性"在很多论文中完全正常，只提示形式聚集）。
+ */
+const ABC_FRAME_RE = /[\u4e00-\u9fff]{1,4}(?:-|—|–)[\u4e00-\u9fff]{1,4}(?:-|—|–)[\u4e00-\u9fff]{1,4}/g
+// "XX化/XX力"：生产性造词信号强（深度化/场景化/穿透力），≥2 个不同实例即提示
+const SUFFIX_FORM_RE = /[\u4e00-\u9fff]{1,3}(?:化|力)/g
+// "XX性"：可持续性/系统性/协同性都是正当术语，需 ≥3 个不同实例才提示
+const SUFFIX_XING_RE = /[\u4e00-\u9fff]{1,3}性/g
+const CLOSED_LOOP_RE = /[\u4e00-\u9fff]{1,4}(?:闭环|赋能机制|生态体系|协同机制|联动机制)/g
+const COINED_MIN_DISTINCT = 2
+const XING_MIN_DISTINCT = 3
+
+export interface CoinedFrameworkHit {
+  paraIndex: number
+  kind: 'abc-frame' | 'suffix-form' | 'closed-loop'
+  snippet: string
+}
+
+export function findCoinedFrameworks(paragraphs: string[]): CoinedFrameworkHit[] {
+  const out: CoinedFrameworkHit[] = []
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const p = paragraphs[pi]
+    // A-B-C 短线框架：出现一次即提示（候选，低危）
+    ABC_FRAME_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = ABC_FRAME_RE.exec(p)) !== null) {
+      out.push({ paraIndex: pi, kind: 'abc-frame', snippet: m[0] })
+      break // 每段一个框架提示即可
+    }
+    // XX化/XX力：同一段 ≥2 个不同实例（深度化/场景化/生态化…）
+    const suffixes = new Set<string>()
+    SUFFIX_FORM_RE.lastIndex = 0
+    while ((m = SUFFIX_FORM_RE.exec(p)) !== null) {
+      suffixes.add(m[0])
+      if (suffixes.size >= COINED_MIN_DISTINCT) break
+    }
+    if (suffixes.size >= COINED_MIN_DISTINCT) {
+      out.push({ paraIndex: pi, kind: 'suffix-form', snippet: [...suffixes].slice(0, 4).join(' / ') })
+    }
+    // XX性：需 ≥3 个不同实例（可持续性/系统性单独出现是正当术语）
+    const xings = new Set<string>()
+    SUFFIX_XING_RE.lastIndex = 0
+    while ((m = SUFFIX_XING_RE.exec(p)) !== null) {
+      xings.add(m[0])
+      if (xings.size >= XING_MIN_DISTINCT) break
+    }
+    if (xings.size >= XING_MIN_DISTINCT) {
+      out.push({ paraIndex: pi, kind: 'suffix-form', snippet: [...xings].slice(0, 4).join(' / ') })
+    }
+    // 闭环/赋能机制/体系
+    CLOSED_LOOP_RE.lastIndex = 0
+    while ((m = CLOSED_LOOP_RE.exec(p)) !== null) {
+      out.push({ paraIndex: pi, kind: 'closed-loop', snippet: m[0] })
+      break
+    }
+  }
+  return out.slice(0, 4)
+}
+
+/**
+ * v1.3 正确但空泛（generic-claim-candidate）：仅当一句话同时满足多个弱信号才报——
+ * 抽象名词多 + 无实体（数字/引用/大写实体）+ 无方法动作 + 命中万能句型。
+ * findingKind=candidate、confidence=low（理论/定性论文不误伤）。
+ */
+const GENERIC_ABSTRACT = /(机制|支撑|动态|稳健|范式|耦合|协同|维度|体系|闭环|赋能|生态|价值|全方位|多维度|深层次|\bcomprehensive(?:ly)?\b|\bholistic\b|\boverall\b|\beffective(?:ness)?\b|\bmeaningful\b|\bsignificant\b|\bframework\b|\bintegration\b|\bapproach\b)/gi
+const GENERIC_TEMPLATES = /(通过深入分析发现|需要[^，。；]{2,16}(进行|加以)[^，。；]{2,16}(解决|提升|处理|应对)|以充分发挥[^，。；]{1,12}的作用|在[^，。；]{2,16}的过程中发挥着?[^，。；]{1,10}(作用|价值)|对[^，。；]{2,16}(具有|起到)[^，。；]{1,10}(意义|价值|作用))/g
+
+export interface GenericClaimHit {
+  paraIndex: number
+  signals: string[]
+  sentence: string
+}
+
+export function findGenericClaims(paragraphs: string[]): GenericClaimHit[] {
+  const out: GenericClaimHit[] = []
+  for (let pi = 0; pi < paragraphs.length && out.length < 3; pi++) {
+    for (const s of splitSentences(paragraphs[pi])) {
+      const signals: string[] = []
+      const abstractHits = s.match(GENERIC_ABSTRACT) ?? []
+      if (abstractHits.length >= 2) signals.push(`抽象名词×${abstractHits.length}`)
+      // 实体检测：数字/引用/图表编号/专有实体（句首大写词不算——"This/We/Our" 是普通句首词）
+      const body = s.replace(/^\s*[A-Z][a-z]{1,3}\s+/, '')
+      const hasEntity = /\d|\\cite|\\ref|Figure\s*\d|Table\s*\d|[A-Z][a-z]{2,}/.test(body)
+      if (!hasEntity) signals.push('无实体/数值/引用')
+      // /g 正则 test() 有 lastIndex 污染——用非全局克隆
+      if (!/^(?:analyz|analys|measure|compare|estimate|derive|compute|evaluate|examine|investigat|simulat|model|test|assess|quantif|observ)\w*/i.test(s)) signals.push('无方法动作')
+      if (GENERIC_TEMPLATES.test(s)) signals.push('万能句型')
+      if (signals.length >= 3) {
+        out.push({ paraIndex: pi, signals, sentence: s.slice(0, 160) })
+        break
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * v1.3 本地引用完整性（零网络确定性检查）：\cite key ↔ .bib 条目、\ref ↔ \label、
+ * bib 条目字段完整性、同一 DOI 多 key。仅当提供 bibText 时启用。
+ */
+export interface BibEntry {
+  key: string
+  title?: string
+  year?: string
+  author?: string
+  doi?: string
+}
+
+/** 极简 .bib 解析（@type{key, field = {value}, ...}；支持字段值内嵌套花括号的简单情况） */
+export function parseBibText(bibText: string): BibEntry[] {
+  const out: BibEntry[] = []
+  const entryRe = /@(\w+)\s*\{\s*([^,\s]+)\s*,/g
+  let m: RegExpExecArray | null
+  while ((m = entryRe.exec(bibText)) !== null) {
+    // 从 key 后开始平衡花括号扫描条目体（支持 title = {A {B} C} 这类嵌套）
+    const start = m.index + m[0].length
+    let depth = 1
+    let i = start
+    while (i < bibText.length && depth > 0) {
+      if (bibText[i] === '{') depth += 1
+      else if (bibText[i] === '}') depth -= 1
+      i += 1
+    }
+    const body = bibText.slice(start, i - 1)
+    const field = (name: string): string | undefined => {
+      const fm = new RegExp(`\\b${name}\\s*=\\s*\\{((?:[^{}]|\\{[^{}]*\\})*)\\}`, 'i').exec(body)
+      return fm ? fm[1].trim() : undefined
+    }
+    out.push({
+      key: m[2],
+      title: field('title'),
+      year: field('year'),
+      author: field('author'),
+      doi: field('doi'),
+    })
+  }
+  return out
+}
+
+export interface CitationIntegrityHit {
+  kind: 'unresolved-cite' | 'missing-label' | 'incomplete-bib-entry' | 'duplicate-doi'
+  detail: string
+}
+
+/** 正文 \cite key 提取（含多 key：\cite{a,b}） */
+function extractCiteKeys(text: string): string[] {
+  const re = /\\cite(?:\[[^\]]*\])?\{([^{}]*)\}/g
+  const keys: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    for (const k of m[1].split(',')) {
+      const t = k.trim()
+      if (t) keys.push(t)
+    }
+  }
+  return keys
+}
+
+/** \label 与 \ref 提取 */
+function extractLabelsRefs(text: string): { labels: Set<string>; refs: string[] } {
+  const labels = new Set<string>()
+  const refs: string[] = []
+  let m: RegExpExecArray | null
+  const lRe = /\\label\{([^{}]*)\}/g
+  while ((m = lRe.exec(text)) !== null) labels.add(m[1].trim())
+  const rRe = /\\ref\{([^{}]*)\}/g
+  while ((m = rRe.exec(text)) !== null) refs.push(m[1].trim())
+  return { labels, refs }
+}
+
+export function checkCitationIntegrity(text: string, bibText: string): CitationIntegrityHit[] {
+  const hits: CitationIntegrityHit[] = []
+  const entries = parseBibText(bibText)
+  const keys = new Set(entries.map((e) => e.key))
+  // 1. unresolved \cite key
+  for (const k of extractCiteKeys(text)) {
+    if (!keys.has(k)) hits.push({ kind: 'unresolved-cite', detail: `\\cite{${k}} 在 .bib 中不存在` })
+  }
+  // 2. \ref ↔ \label
+  const { labels, refs } = extractLabelsRefs(text)
+  for (const r of refs) {
+    if (!labels.has(r)) hits.push({ kind: 'missing-label', detail: `\\ref{${r}} 无对应 \\label{${r}}` })
+  }
+  // 3. bib 条目缺 title/year/author（最多报 5 条）
+  let incomplete = 0
+  for (const e of entries) {
+    if (incomplete >= 5) break
+    const missing: string[] = []
+    if (!e.title) missing.push('title')
+    if (!e.year) missing.push('year')
+    if (!e.author) missing.push('author')
+    if (missing.length > 0) {
+      incomplete += 1
+      hits.push({ kind: 'incomplete-bib-entry', detail: `${e.key} 缺字段: ${missing.join('/')}` })
+    }
+  }
+  // 4. 同一 DOI 对应多个 key
+  const doiKeys = new Map<string, string[]>()
+  for (const e of entries) {
+    if (!e.doi) continue
+    const d = e.doi.toLowerCase()
+    const arr = doiKeys.get(d) ?? []
+    arr.push(e.key)
+    doiKeys.set(d, arr)
+  }
+  for (const [d, ks] of doiKeys) {
+    if (ks.length > 1) hits.push({ kind: 'duplicate-doi', detail: `DOI ${d} 对应多个 key: ${ks.join(', ')}` })
+  }
+  return hits
+}
+
+/**
+ * v1.3 版式元素行判定：整行加粗/斜体标题（**1. Introduction**）、图片行
+ * （![](...)）、纯分隔符行（表格残留 --------）、作者上标行（^a^ ...）、
+ * 关键词行（**Keywords:** ...）——这些是正常版式，不是"一句成段"碎片化。
+ */
+function isLayoutOnlyParagraph(p: string): boolean {
+  const t = p.trim()
+  // 整行加粗/斜体标题（**Figure 9. ...** / *2.1.1 ...* / **Abstract**）
+  if (/^\*\*[^*]{1,150}\*\*$/.test(t)) return true
+  if (/^\*[^*]{1,150}\*$/.test(t)) return true
+  // 图片行
+  if (/^!\[[^\]]*\]\([^)]*\)/.test(t)) return true
+  // 纯分隔符/表格残留行（-------- ------------）
+  if (/^[\s\-–—:|+=\\.]{6,}$/.test(t)) return true
+  // 作者上标行（^a^ Fujian Key Laboratory ...）
+  if (/^\^[a-z]\^?\s/.test(t)) return true
+  // 关键词行（**Keywords:** / **Key words:**）
+  if (/^\*{0,2}\s*key\s?words?\s*:?\s*\*{0,2}/i.test(t)) return true
+  return false
+}
+
+/**
+ * v1.3 总结套话位置感知：不新增词表——检测"同一总结套话在每个小节末尾反复出现"。
+ * 每个 section 取最后一句（或最后 20% 文本），命中套话词记一次；≥2 个 section 末尾
+ * 都出现 → 模板化信号（"每个小节末尾都来一句总结"）。
+ */
+const SUMMARY_CLICHE_RE = /(综上所述|总而言之|总的来说|综上|由此可见|不难发现|可以看出|总之|综上可见|in conclusion|to sum up|in summary|overall,|taken together)/gi
+export const SUMMARY_CLICHE_MIN_SECTIONS = 2
+
+export function findSummaryClicheBySection(sections: Array<{ name: string; text: string }>): Array<{ name: string; cliche: string }> {
+  const out: Array<{ name: string; cliche: string }> = []
+  for (const sec of sections) {
+    const sents = splitSentences(sec.text)
+    if (sents.length === 0) continue
+    // 位置感知：只取最后一句（小节末尾）
+    const last = sents[sents.length - 1]
+    const m = last.match(SUMMARY_CLICHE_RE)
+    if (m) out.push({ name: sec.name, cliche: m[0] })
+  }
+  return out
+}
+
 export function auditText(text: string, opts?: AuditOptions): AuditReport {
   const profile = opts?.profile ?? 'unknown'
   const maxParagraphs = opts?.maxParagraphs ?? 400
@@ -2255,6 +2912,15 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     .split(/\n{2,}|\r?\n\r?\n/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
+    .slice(0, maxParagraphs)
+
+  // v1.3：节奏类规则（段落/句长）只用 prose-only 段落——标题行（heading）单独成行
+  // 会污染"一句成段"统计（论文标题/图注一行一段是正常版式，不是碎片化）
+  const proseParagraphs = view.segments
+    .filter((s) => s.kind === 'prose')
+    .flatMap((s) => s.text.split(/\n{2,}|\r?\n\r?\n/))
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !isLayoutOnlyParagraph(p))
     .slice(0, maxParagraphs)
 
   // v0.4：按 segment 类型分组文本（stats 与规则共用同一来源）
@@ -2341,6 +3007,218 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
           evidence: rule.evidence,
           matchText: l.sentences[0].slice(0, 40),
         })
+      }
+      continue
+    }
+
+    // v1.3 paragraph-rhythm：段落节奏（碎片化/拥塞/过度整齐）——aggregate 统计（prose-only，排除标题）
+    if (rule.paragraphRhythm) {
+      const sig = analyzeParagraphRhythm(proseParagraphs)
+      const g = PARAGRAPH_RHYTHM_GATES
+      const sub: string[] = []
+      if (sig.total >= 6) {
+        if (sig.singletonRatio >= g.singletonRatioMin && sig.singletonCount >= g.singletonCountMin) {
+          sub.push(`碎片化：${sig.singletonCount}/${sig.total} 段是一句成段（${(sig.singletonRatio * 100).toFixed(0)}%）`)
+        }
+        if (sig.longOutlierRatio >= g.outlierRatioMin && sig.longOutlierCount >= g.outlierCountMin) {
+          sub.push(`拥塞：${sig.longOutlierCount} 段长度 > 段长中位数 ${sig.lengthMedian} 的 ${LONG_OUTLIER_MULT} 倍`)
+        }
+        if (sig.nearEqualRunCount >= g.nearEqualRunMin) {
+          sub.push(`过度整齐：${sig.nearEqualRunCount} 处连续 ${NEAR_EQUAL_RUN_MIN}+ 段长度在中位数 ±${NEAR_EQUAL_TOL * 100}% 内`)
+        }
+      }
+      if (sub.length > 0) {
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: -1,
+          snippet: `（段落统计 ${sig.total} 段，中位长 ${sig.lengthMedian}，CV ${sig.lengthCV}）${sub.join('；')}`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+          findingKind: rule.findingKind,
+          density: { count: sig.total, perK: 0 },
+          matchText: `paragraph-rhythm:${sub.join('|').slice(0, 60)}`,
+        })
+      }
+      continue
+    }
+
+    // v1.3 sentence-rhythm-uniformity：句长节奏均匀（局部 run + 历史 std 对比）
+    if (rule.sentenceRhythm) {
+      const sr = analyzeSentenceRhythm(proseParagraphs, opts?.styleProfile)
+      if (sr.totalSentences >= 8 && (sr.uniformByRun || sr.uniformVsAuthor)) {
+        const why: string[] = []
+        if (sr.uniformByRun) why.push(`全文 ${sr.runCount} 处连续 ${SENTENCE_RUN_MIN}+ 句长度相近`)
+        if (sr.uniformVsAuthor) why.push(`当前句长 std ${sr.std} 明显低于作者历史 ${sr.authorStd}（< ${AUTHOR_STD_RATIO * 100}%）`)
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: -1,
+          snippet: `（句长统计 ${sr.totalSentences} 句，std ${sr.std}，CV ${sr.cv}）${why.join('；')}`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+          findingKind: rule.findingKind,
+          density: { count: sr.totalSentences, perK: 0 },
+          matchText: `sentence-rhythm:${sr.uniformByRun ? 'run' : ''}${sr.uniformVsAuthor ? 'author' : ''}`,
+        })
+      }
+      continue
+    }
+
+    // v1.3 repeated-discourse-scaffold：跨段落重复枚举脚手架
+    if (rule.scaffoldRepeat) {
+      const scaffolds = findRepeatedScaffolds(proseParagraphs)
+      for (const sc of scaffolds.slice(0, 2)) {
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: -1,
+          snippet: `（脚手架签名 ${sc.signature}）${sc.count} 个独立段落重复使用相同枚举骨架`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+          findingKind: rule.findingKind,
+          matchText: `scaffold:${sc.signature}`,
+        })
+      }
+      continue
+    }
+
+    // v1.3 punctuation-scaffold-overload：标点组合聚集
+    if (rule.punctuationOverload) {
+      const overs = findPunctuationOverloads(proseParagraphs)
+      for (const o of overs) {
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: o.paraIndex,
+          snippet: `（${o.classes} 类结构标点同句聚集）${o.snippet}`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+          findingKind: rule.findingKind,
+          matchText: `punct:${o.snippet.slice(0, 40)}`,
+        })
+      }
+      continue
+    }
+
+    // v1.3 coined-framework-language：自创框架词（形式规则，全 candidate）
+    if (rule.coinedFramework) {
+      const frames = findCoinedFrameworks(proseParagraphs)
+      for (const f of frames) {
+        const kindLabel = f.kind === 'abc-frame' ? 'A-B-C 短线框架' : f.kind === 'suffix-form' ? '后缀造词（化/力/性）' : '闭环/机制类框架词'
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: f.paraIndex,
+          snippet: `（${kindLabel}）${f.snippet}`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+          findingKind: rule.findingKind,
+          matchText: `coined:${f.kind}:${f.snippet.slice(0, 40)}`,
+        })
+      }
+      continue
+    }
+
+    // v1.3 generic-claim-candidate：正确但空泛（多弱信号组合）
+    if (rule.genericClaim) {
+      const claims = findGenericClaims(proseParagraphs)
+      for (const c of claims) {
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: c.paraIndex,
+          snippet: `（弱信号：${c.signals.join('、')}）${c.sentence}`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+          findingKind: rule.findingKind,
+          matchText: `generic:${c.sentence.slice(0, 40)}`,
+        })
+      }
+      continue
+    }
+
+    // v1.3 summary-cliche-positional：总结套话位置感知（每个小节末尾都出现）
+    if (rule.summaryPositional) {
+      const cliches = findSummaryClicheBySection(sections)
+      const counts = new Map<string, number>()
+      for (const c of cliches) counts.set(c.cliche.toLowerCase(), (counts.get(c.cliche.toLowerCase()) ?? 0) + 1)
+      for (const [cliche, n] of counts) {
+        if (n >= SUMMARY_CLICHE_MIN_SECTIONS) {
+          const where = cliches.filter((c) => c.cliche.toLowerCase() === cliche).map((c) => c.name).slice(0, 5).join('、')
+          hits.push({
+            ruleId: rule.id,
+            category: rule.category,
+            severity: rule.severity,
+            confidence: rule.confidence,
+            label: rule.label,
+            paragraphIndex: -1,
+            snippet: `（位置感知）"${cliche}" 出现在 ${n} 个小节末尾：${where}`,
+            message: rule.message,
+            suggestion: rule.suggestion,
+            note: rule.note,
+            evidence: rule.evidence,
+            findingKind: rule.findingKind,
+            matchText: `summary-pos:${cliche}`,
+          })
+        }
+      }
+      continue
+    }
+
+    // v1.3 local-citation-integrity：\cite ↔ .bib / \ref ↔ \label（仅提供 bibText 时）
+    if (rule.citationIntegrity) {
+      if (opts?.bibText && opts.bibText.trim()) {
+        const citHits = checkCitationIntegrity(view.raw, opts.bibText)
+        for (const ch of citHits.slice(0, 8)) {
+          const sev = ch.kind === 'unresolved-cite' || ch.kind === 'missing-label' ? 'medium' : 'low'
+          const kind = ch.kind === 'unresolved-cite' || ch.kind === 'missing-label' ? 'violation' : 'advisory'
+          hits.push({
+            ruleId: rule.id,
+            category: rule.category,
+            severity: sev,
+            confidence: rule.confidence,
+            label: `${rule.label}（${ch.kind === 'unresolved-cite' ? '未解析引用' : ch.kind === 'missing-label' ? '缺失标签' : ch.kind === 'incomplete-bib-entry' ? '条目不完整' : 'DOI 重复'}）`,
+            paragraphIndex: -1,
+            snippet: `（.bib 一致性）${ch.detail}`,
+            message: rule.message,
+            suggestion: rule.suggestion,
+            note: rule.note,
+            evidence: rule.evidence,
+            findingKind: kind,
+            matchText: `cite:${ch.kind}:${ch.detail.slice(0, 60)}`,
+          })
+        }
       }
       continue
     }
@@ -3018,6 +3896,17 @@ export function rulesBrief(): string {
     '- 平均句长参考：英文均值 ≤18 词、中文均值 ≤25 字（ko5.6sol 目标 12–18 词 / 15–25 字）；综述等文体可整体偏长，人工判断',
     '- 中文"的"字链：连续 ≥3 个"的"的修饰嵌套（"基于X的Y的Z的机制"）拆成短句，主谓宾主干显性化',
     '- 空洞热词：英文 robust/crucial/exhibits/tailored/interplay/imperative ≥5 次且 ≥1.0/千词、中文 机制/支撑/动态/耦合/范式 ≥10 次且 ≥3.0/千字时——用具体证据替换（术语用法保留）',
+    '',
+    '## 七·v1.3 篇章统计层（局部规则 → 篇章统计 → 科学完整性）',
+    '- 段落节奏（paragraph-rhythm）：碎片化（一句成段 ≥35% 且 ≥3 段）/ 拥塞（段长 > 中位数 2.5 倍 ≥2 段）/ 过度整齐（连续 ≥3 段长度在中位数 ±15% 内 ≥2 处）——按"一个完整论证单元"切段，不按字数',
+    '- 句长节奏（sentence-rhythm-uniformity）：连续 ≥3 句长度在局部中位数 ±15% 内且全文 ≥2 处 → 节奏过匀；有作者 styleProfile 时对比历史 std（当前 < 历史 60% → 更整齐）——句长随信息密度自然变化，不为整齐而整齐',
+    '- 重复逻辑脚手架（repeated-discourse-scaffold）：多个独立段落重复"首先→其次→最后 / 第一→第二→第三 / First→Second→Third / 从X层面→从Y层面"同一种枚举骨架 → 模板化；单次列举正常',
+    '- 标点脚手架（punctuation-scaffold-overload）：同一句内 ≥3 类结构标点（括号/冒号/分号/引号/破折号）聚集——用标点承担句法组织时改写',
+    '- 自创框架词（coined-framework-language）：A-B-C 短线框架（"输入—处理—输出"）、连续多个 XX化/XX力/XX性、XX闭环/赋能机制——candidate，需有定义与来源',
+    '- 空泛判断（generic-claim-candidate）：抽象名词 ≥2 + 无实体/数值/引用 + 无方法动作 + 万能句型，多弱信号同时满足才报（candidate + low）',
+    '- 总结套话位置感知（summary-cliche-positional）：不新增词表——"综上所述/in conclusion" 在每个小节末尾反复出现才报（位置驱动，≥2 个小节末尾）',
+    '- 本地引用完整性（local-citation-integrity）：同目录 .bib 存在时检查 \\cite key 是否真实存在、\\ref ↔ \\label 是否对应、bib 条目是否缺 title/year/author、同一 DOI 是否对应多个 key——零网络确定性检查；"该文献是否支持这句话"留在插件边界外',
+    '- adaptive threshold 原则：有作者 profile → 用历史分布做自适应阈值；无 profile → conservative heuristic，不做固定次数一刀切',
     '',
     '## 八、发布会原则（扬长避短）',
     '- 只围绕优势组织论文；不写工作汇报、不主动示弱、不替审稿人攻击自己',

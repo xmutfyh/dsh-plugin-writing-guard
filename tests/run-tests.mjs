@@ -4,7 +4,7 @@
  * 目标：每条核心规则至少有一个 true-positive 和一个 true-negative 断言。
  * 运行：node tests/run-tests.mjs
  */
-import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier } from '../lib/rules.js'
+import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
 import { isPaperFile, baselineByteSize, pruneBaselines } from '../lib/index.js'
 
 let pass = 0
@@ -1452,6 +1452,196 @@ console.log('=== 80. v1.2.3 fallback added/removed 统一可信度（位置兜�
   const r = auditText('Z did not improve.', { profile: 'manuscript', original: 'Z improved.' })
   const h = r.hits.find((x) => x.ruleId === 'negation-drift')
   check('fallback added event is candidate at low sim', h && h.findingKind === 'candidate', JSON.stringify(h && [h.findingKind, h.snippet]))
+}
+
+console.log('=== 81. v1.3 paragraph-rhythm（碎片化/拥塞/过度整齐）===')
+{
+  // 碎片化 TP：7 段里 4 段是一句成段
+  const fragmented = 'P1 只有一句话。\n\nP2 也只有一句话。\n\nP3 还是只有一句话。\n\nP4 依然只有一句话。\n\nP5 这一段有两句话。第二句补足。\n\nP6 这一段也有两句。补充一句。\n\nP7 正常段落，包含足够多的内容来填充长度，让整体分布不至于过短，句子数量也足够。'
+  const r1 = auditText(fragmented, { profile: 'manuscript' })
+  const h1 = r1.hits.find((h) => h.ruleId === 'paragraph-rhythm')
+  check('paragraph-rhythm fragmented TP', h1 && h1.snippet.includes('碎片化'), h1?.snippet)
+
+  // 拥塞 TP：少数段远高于分布（2 段 > 中位数 2.5 倍）
+  const congested = []
+  for (let i = 0; i < 8; i++) congested.push(`段 ${i} 的普通内容。这一段的长度保持在正常范围内，大约二十个词左右，用来模拟论文中的典型段落。`)
+  congested.push('这一段异常地长，包含了大量没有实际意义的填充内容，其目的是模拟论文中少数段落远高于自身段长分布的情况，这种段落往往需要拆分成多个独立段落来处理，每个段落只承担一个论证单元，内容虽然很多但实际上并没有增加多少信息量，读者在阅读时也会感到明显的负担。')
+  congested.push('另一段也异常地长，同样包含了很多没有实际意义的填充内容，其目的是模拟论文中少数段落远高于自身段长分布的情况，这种段落往往需要拆分成多个独立段落来处理，每个段落只承担一个论证单元，内容虽然很多但实际上并没有增加多少信息量，读者在阅读时也会感到明显的负担。')
+  const r2 = auditText(congested.join('\n\n'), { profile: 'manuscript' })
+  const h2 = r2.hits.find((h) => h.ruleId === 'paragraph-rhythm')
+  check('paragraph-rhythm congested TP', h2 && h2.snippet.includes('拥塞'), h2?.snippet)
+
+  // 过度整齐 TP：连续 3+ 段长度在中位数 ±15%
+  const uniform = []
+  for (let i = 0; i < 8; i++) uniform.push(`第 ${i} 段内容是长度几乎相同的句子组合，每段大约二十五词。这样的段落长度完全一致。`)
+  const r3 = auditText(uniform.join('\n\n'), { profile: 'manuscript' })
+  const h3 = r3.hits.find((h) => h.ruleId === 'paragraph-rhythm')
+  check('paragraph-rhythm uniform TP', h3 && h3.snippet.includes('过度整齐'), h3?.snippet)
+
+  // TN：正常论文段落（长短自然变化）
+  const normal = '第一段介绍了背景，并且包含了足够的细节来说明研究动机。\n\n第二段只有一句话作为过渡。\n\n第三段详细描述了方法，包含许多技术细节和参数。\n\n第四段展示了结果。\n\n第五段讨论了局限性与未来方向。'
+  const tn = auditText(normal, { profile: 'manuscript' })
+  check('paragraph-rhythm TN (short doc, no hit)', !hasRule(tn, 'paragraph-rhythm'), JSON.stringify(tn.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 82. v1.3 sentence-rhythm-uniformity（局部 run + 作者历史对比）===')
+{
+  // run TP：两个段落内各有连续 ≥3 句长度相近（共 8+ 句以满足总句数门槛）
+  const runText = [
+    'The first sentence here is about twenty words long in total. The second sentence here is also about twenty words long. The third sentence keeps the very same approximate length too. The fourth sentence again matches the length of the previous three.',
+    '',
+    'Another paragraph repeats the same pattern of uniform length. This second sentence matches the first one in length exactly. And the third sentence is again the same length again. The fourth sentence here also keeps that same uniform length.',
+  ].join('\n')
+  const r = auditText(runText, { profile: 'manuscript' })
+  const h = r.hits.find((x) => x.ruleId === 'sentence-rhythm-uniformity')
+  check('sentence-rhythm run TP', h && h.snippet.includes('连续'), h?.snippet)
+
+  // 作者历史 std 对比 TP：当前 std 明显低于历史
+  const author = computeStyleProfile('Short sentences. Medium length sentence here. Another medium sentence. A bit longer sentence follows. One more regular sentence. The final sentence ends the sample.') // std 应该较大
+  const uniformText = 'The first sentence of this document is exactly twenty words long. The second sentence of this document is exactly twenty words long. The third sentence of this document is exactly twenty words long. The fourth sentence of this document is exactly twenty words long. The fifth sentence of this document is exactly twenty words long. The sixth sentence of this document is exactly twenty words long. The seventh sentence of this document is exactly twenty words long. The eighth sentence of this document is exactly twenty words long. The ninth sentence of this document is exactly twenty words long.'
+  const r2 = auditText(uniformText, { profile: 'manuscript', styleProfile: author })
+  const h2 = r2.hits.find((x) => x.ruleId === 'sentence-rhythm-uniformity')
+  check('sentence-rhythm author-std TP', h2 && h2.snippet.includes('作者历史'), h2?.snippet)
+
+  // TN：句长自然变化的正常文本（无 run、无 author 对比命中）
+  const natural = 'Drying in porous media involves coupled gas-liquid flow. Higher temperature accelerated drying. This is a short concluding remark. We measured pressure drop across eight folds with five seeds, and the results were consistent across all evaluations. RMSE decreased from 2.1 to 1.3 after retraining. Done.'
+  const tn = auditText(natural, { profile: 'manuscript' })
+  check('sentence-rhythm TN (natural variation)', !hasRule(tn, 'sentence-rhythm-uniformity'), JSON.stringify(tn.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 83. v1.3 repeated-discourse-scaffold（枚举脚手架跨段落复用）===')
+{
+  // TP：两个段落都用 首先/其次/最后
+  const tp = '首先，我们建立了微流控平台。其次，我们设计了验证协议。最后，我们总结了边界。\n\n首先，本文分析了出口配置的影响。其次，本文讨论了温度的作用。最后，本文给出了结论。'
+  const r = auditText(tp, { profile: 'manuscript' })
+  const h = r.hits.find((x) => x.ruleId === 'repeated-discourse-scaffold')
+  check('scaffold repeat TP (首先/其次/最后 ×2)', h && h.snippet.includes('2 个独立段落'), h?.snippet)
+
+  // TP 英文：First/Second/Third 两个段落（签名一致）
+  const tpEn = 'First, we built the platform. Second, we designed the protocol. Third, we validated the model. Finally, we summarized the limits.\n\nFirst, the outlet effect was analyzed. Second, the temperature effect was discussed. Third, the boundary was defined. Finally, the conclusion was drawn.'
+  const r2 = auditText(tpEn, { profile: 'manuscript' })
+  check('scaffold repeat TP (First/Second/Third ×2)', hasRule(r2, 'repeated-discourse-scaffold'), JSON.stringify(r2.hits.map((h) => [h.ruleId, h.snippet])))
+
+  // TN：只在一个段落里列举（单次使用正常）
+  const tn = '本文从三个方面展开：首先，建立平台；其次，设计协议；最后，给出结论。下一段完全不用枚举结构。'
+  const r3 = auditText(tn, { profile: 'manuscript' })
+  check('scaffold repeat TN (single use)', !hasRule(r3, 'repeated-discourse-scaffold'), JSON.stringify(r3.hits.map((h) => h.ruleId)))
+
+  // scaffoldSignature 单元测试
+  check('scaffoldSignature 首先其次最后', scaffoldSignature('首先，A。其次，B。最后，C。') === '1-2-4')
+  check('scaffoldSignature 单次不构成', scaffoldSignature('首先，A。后面没有枚举了。') === null)
+  check('scaffoldSignature 从X层面', scaffoldSignature('从制度层面，A。从执行层面，B。从效果层面，C。') === 'P-P-P')
+  check('scaffoldSignature 第一第二第三', scaffoldSignature('第一，A。第二，B。第三，C。') === '1-2-3')
+}
+
+console.log('=== 84. v1.3 punctuation-scaffold-overload（标点组合聚集）===')
+{
+  // TP：同句 ≥3 类结构标点
+  const tp = '本文提出一种"多维协同"机制：首先解决A；其次处理B——形成"输入—处理—输出"的价值闭环（参见表1）。'
+  const r = auditText(tp, { profile: 'manuscript' })
+  const h = r.hits.find((x) => x.ruleId === 'punctuation-scaffold-overload')
+  check('punctuation overload TP (引号+冒号+分号+破折号+括号)', h, h?.snippet)
+
+  // TN：正常使用两种以内标点
+  const tn = 'The results show that the RMSE decreased from 2.1 to 1.3 after retraining (see Table 3).'
+  const r2 = auditText(tn, { profile: 'manuscript' })
+  check('punctuation overload TN', !hasRule(r2, 'punctuation-scaffold-overload'), JSON.stringify(r2.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 85. v1.3 coined-framework-language（自创框架词，形式规则）===')
+{
+  // TP：A-B-C 短线框架
+  const tp1 = '本框架采用"问题-原因-对策"的分析路径，形成了"输入-处理-输出"的数据流。'
+  const r1 = auditText(tp1, { profile: 'manuscript' })
+  check('coined framework TP (A-B-C 短线)', hasRule(r1, 'coined-framework-language'), JSON.stringify(r1.hits.map((h) => [h.ruleId, h.snippet])))
+
+  // TP：连续多个 XX化
+  const tp2 = '推动管理方式深度化、场景化、生态化转型，实现价值化运营。'
+  const r2 = auditText(tp2, { profile: 'manuscript' })
+  check('coined framework TP (XX化 连续)', hasRule(r2, 'coined-framework-language'), JSON.stringify(r2.hits.map((h) => [h.ruleId, h.snippet])))
+
+  // TP：闭环/赋能机制
+  const tp3 = '构建数据-业务-价值的赋能闭环与生态体系。'
+  const r3 = auditText(tp3, { profile: 'manuscript' })
+  check('coined framework TP (闭环/赋能)', hasRule(r3, 'coined-framework-language'), JSON.stringify(r3.hits.map((h) => [h.ruleId, h.snippet])))
+
+  // TN：正常术语不报
+  const tn = 'The system exhibits robust performance with a coupling mechanism between thermal and hydraulic fields (可持续性与协同性在此领域是正当术语).'
+  const r4 = auditText(tn, { profile: 'manuscript' })
+  check('coined framework TN (正常术语)', !hasRule(r4, 'coined-framework-language'), JSON.stringify(r4.hits.map((h) => [h.ruleId, h.snippet])))
+}
+
+console.log('=== 86. v1.3 generic-claim-candidate（多弱信号组合）===')
+{
+  // TP：抽象名词多 + 无实体 + 无方法动作 + 万能句型
+  const tp = '本研究通过深入分析发现，企业管理实践中存在的诸多问题，需要通过全面系统的方法进行有效解决，以充分发挥管理体系的整体作用。'
+  const r = auditText(tp, { profile: 'manuscript' })
+  const h = r.hits.find((x) => x.ruleId === 'generic-claim-candidate')
+  check('generic claim TP (4 弱信号)', h && h.findingKind === 'candidate', JSON.stringify(h && [h.snippet, h.findingKind]))
+
+  // TN：有具体实体/方法动作的句子不报
+  const tn = 'We measured pressure drop across eight folds and found RMSE = 1.283, which confirms the causal model improves accuracy by 12%.'
+  const r2 = auditText(tn, { profile: 'manuscript' })
+  check('generic claim TN (有证据)', !hasRule(r2, 'generic-claim-candidate'), JSON.stringify(r2.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 87. v1.3 local-citation-integrity（.bib 一致性）===')
+{
+  const bib = [
+    '@article{smith2024,',
+    '  title = {Pore-scale drying experiments},',
+    '  author = {Smith, J. and Doe, A.},',
+    '  year = {2024},',
+    '  doi = {10.1000/abc}',
+    '}',
+    '@article{doe2023,',
+    '  title = {Microfluidic visualization},',
+    '  year = {2023}',
+    '}',
+  ].join('\n')
+
+  // 解析
+  const entries = parseBibText(bib)
+  check('parseBibText 2 entries', entries.length === 2 && entries[0].key === 'smith2024' && entries[0].doi === '10.1000/abc' && entries[0].title === 'Pore-scale drying experiments', JSON.stringify(entries))
+  check('parseBibText missing fields detected', entries[1].key === 'doe2023' && !entries[1].author && entries[1].title === 'Microfluidic visualization', JSON.stringify(entries[1]))
+
+  // TP：unresolved cite + 缺失 label + 条目缺 author
+  const tex = 'As shown in \\cite{smith2024} and \\cite{nonexistent2020}, the drying rate depends on temperature \\ref{fig:missing}.'
+  const r = auditText(tex, { profile: 'manuscript', bibText: bib })
+  check('citation integrity unresolved-cite TP', hasRule(r, 'local-citation-integrity'), JSON.stringify(r.hits.map((h) => h.snippet)))
+  const details = r.hits.filter((h) => h.ruleId === 'local-citation-integrity').map((h) => h.snippet).join('|')
+  check('citation integrity covers unresolved + missing-label + incomplete', details.includes('nonexistent2020') && details.includes('fig:missing') && details.includes('doe2023 缺字段'), details)
+
+  // TN：全部一致时无命中（bib 条目都完整）
+  const completeBib = [
+    '@article{smith2024,',
+    '  title = {Pore-scale drying experiments},',
+    '  author = {Smith, J. and Doe, A.},',
+    '  year = {2024},',
+    '  doi = {10.1000/abc}',
+    '}',
+  ].join('\n')
+  const cleanTex = 'As shown in \\cite{smith2024}, the drying rate depends on temperature. \\label{fig:x} See \\ref{fig:x}.'
+  const r2 = auditText(cleanTex, { profile: 'manuscript', bibText: completeBib })
+  check('citation integrity TN (all consistent)', !hasRule(r2, 'local-citation-integrity'), JSON.stringify(r2.hits.map((h) => h.snippet)))
+
+  // TN：不提供 bibText 时规则不启用
+  const r3 = auditText(tex, { profile: 'manuscript' })
+  check('citation integrity no-bib no-op', !hasRule(r3, 'local-citation-integrity'), JSON.stringify(r3.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 88. v1.3 summary-cliche-positional（总结套话位置感知）===')
+{
+  // TP：两个章节末尾都用"综上所述"
+  const tp = '# Introduction\n\n背景内容。\n\n综上所述，本研究有重要意义。\n\n# Results\n\n结果内容。\n\n综上所述，结果支持假设。\n\n# Methods\n\n方法内容，末尾是正常判断句。'
+  const r = auditText(tp, { profile: 'manuscript' })
+  const h = r.hits.find((x) => x.ruleId === 'summary-cliche-positional')
+  check('summary cliche positional TP (2 sections end with 综上所述)', h && h.snippet.includes('2 个小节末尾'), h?.snippet)
+
+  // TN：套话只出现一次（或不在小节末尾）
+  const tn = '# Introduction\n\n综上所述，本研究有重要意义。\n\n# Results\n\n结果内容。\n\n# Methods\n\n方法内容。'
+  const r2 = auditText(tn, { profile: 'manuscript' })
+  check('summary cliche positional TN (single occurrence)', !hasRule(r2, 'summary-cliche-positional'), JSON.stringify(r2.hits.map((h) => h.ruleId)))
 }
 
 console.log('')

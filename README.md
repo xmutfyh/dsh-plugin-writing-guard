@@ -267,6 +267,25 @@ Scientific tokens          Scientific commitments
 
 测试 240 → 246 项。
 
+## v1.3.0 篇章统计层（第 10 轮评审：局部规则 → 篇章统计 → 科学完整性）
+
+> 不是再扩 AI 禁词表，而是开始判断**整篇文章是不是写得过于整齐**——把 Writing Guard 从
+> "词、句、claim 级"推到"篇章结构层"。7 条新规则全部 deterministic/statistical，零网络：
+
+| 规则 | 原理 | 性质 |
+|---|---|---|
+| **`paragraph-rhythm`** 🔴 | 一次计算多个信号：一句成段比例（碎片化）、段长 CV + 长段 outlier（拥塞）、连续 ≥3 段长度在中位数 ±15% 内的 run 数（过度整齐）；只用 prose-only 段落（版式行如标题/图片/表格残留不误报） | advisory |
+| **`sentence-rhythm-uniformity`** 🔴 | 段落内连续 ≥3 句长度在局部中位数 ±15% 内且全文 ≥2 处 → 节奏过匀；有作者 styleProfile 时对比历史 std（当前 < 历史 60% → 更整齐）——**adaptive threshold**：有 profile 用历史分布，无 profile 用 conservative heuristic | advisory |
+| **`repeated-discourse-scaffold`** 🔴 | 段落抽象成枚举签名（首先→其次→最后=`1-2-4`、第一→第二→第三=`1-2-3`、First/Second/Third、从X层面→从Y层面=`P-P-P`）；同一签名在 ≥2 个独立段落出现 → 模板化；单次列举正常 | candidate |
+| **`punctuation-scaffold-overload`** | 同一句内 ≥3 类结构标点（括号/冒号/分号/引号/破折号）组合聚集；豁免 `1) RMSE: ...; ...`、`(a)(b)(c)` 图注、`Level-2 (unseen-combination): ...` 等论文标准格式 | candidate |
+| **`coined-framework-language`** | 形式规则不靠词表：A-B-C 短线框架（"输入—处理—输出"）、同段 ≥2 个不同 XX化/XX力、≥3 个不同 XX性（可持续性/系统性是正当术语）、XX闭环/赋能机制 | candidate |
+| **`generic-claim-candidate`** | 多弱信号组合才报（抽象名词 ≥2 + 无实体/数值/引用 + 无方法动作 + 万能句型，≥3 信号），中英双语 | candidate + low |
+| **`summary-cliche-positional`** | 不新增词表——同一总结套话（综上所述/in conclusion）在每个小节末尾反复出现（≥2 个小节末尾）才报，位置驱动 | advisory |
+| **`local-citation-integrity`** 🔴 | 零网络确定性：`\cite{key}` ↔ `.bib` 条目存在性、`\ref` ↔ `\label` 对应、bib 条目缺 title/year/author、同一 DOI 多 key；写作/自动审计都自动探测同目录 `.bib`；"该文献是否支持这句话"留在边界外 | violation/advisory |
+| **StyleProfile → 节奏指纹** | 新增 `sentenceLengthCV`/`shortSentenceRatio`/`longSentenceRatio`/`paragraphLengthStd`/`paragraphLengthCV`（向后兼容） | — |
+
+测试 246 → 276 项。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——

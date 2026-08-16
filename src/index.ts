@@ -285,6 +285,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       'v1.0：证据状态守恒（reported/observed/measured/estimated/simulated 消失或被替换时核验——"participants reported improvement" 不能变成 "participants improved"）；' +
       '命中带性质标签（INVARIANT/VIOLATION/CANDIDATE/ADVISORY）：INVARIANT=科学不变量被改动，CANDIDATE=防御性候选（可能承担正当边界，勿自动删除）。' +
       '版本差距过大（全文重写）时自动降级为 version-gap 提示，避免行级对比噪音。' +
+      'v1.3 篇章统计层：段落节奏（碎片化/拥塞/过度整齐）、句长节奏均匀（局部 run + 作者历史 std 对比）、重复逻辑脚手架（首先其次最后/第一第二第三跨段落复用）、标点脚手架过载（括号/冒号/分号/引号/破折号同句聚集）、自创框架词（XX化/XX力/A-B-C 短线）、空泛判断（多弱信号组合）与本地引用完整性（filePath 同目录存在 .bib 时自动检查 \\cite key ↔ .bib、\\ref ↔ \\label、条目缺字段、DOI 重复）。' +
       '输入 text 或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。' +
       `（dsh-plugin-writing-guard v${PLUGIN_VERSION}）`,
     parameters: {
@@ -294,7 +295,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       verbose: { type: 'boolean', description: 'true 时输出每条问题的提示与修改建议（默认 false，只输出原文摘要）' },
       projectResidueTerms: { type: 'array', items: { type: 'string' }, description: '临时追加的项目内部词表（仅本次调用生效；命中按 medium 报；持久配置见插件 config.projectResidueTerms）' },
       original: { type: 'string', description: 'v0.6/v0.8 修改前的原文。提供后开启 Scholarship Lock（数字/百分数/p 值/CI/引用/图表编号/DOI 对比，变化按 HIGH 报）+ Epistemic Lock（主张强度漂移/否定与零结果翻转/scope 边界消失）——语言润色不应改变科研事实' },
-      styleProfile: { type: 'string', description: 'v0.6 Author Style Profile：作者历史风格档案 JSON（由 writing_style_profile 生成）。提供后检测当前句长分布是否偏离作者历史（偏离按 low 提示）' },
+      styleProfile: { type: 'string', description: 'v0.6/v1.3 Author Style Profile：作者历史风格档案 JSON（由 writing_style_profile 生成，含句长/段长节奏指纹）。提供后检测句长分布偏离（median 漂移 + std/CV 整齐度对比，v1.3）' },
     },
     output: {
       schema: { type: 'string' },
@@ -308,6 +309,19 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         profile = args.profile as DocumentProfile
       } else if (args.filePath) {
         profile = detectDocumentProfile(args.filePath)
+      }
+      // v1.3：filePath 同目录探测 .bib（local-citation-integrity 数据源；零网络）
+      let bibText: string | undefined
+      if (typeof args.filePath === 'string' && args.filePath) {
+        try {
+          const dir = path.dirname(args.filePath)
+          const bibs = (await fs.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.bib'))
+          if (bibs.length > 0) {
+            bibText = await fs.readFile(path.join(dir, bibs[0]), 'utf8')
+          }
+        } catch {
+          // 目录不可读/无 .bib：跳过引用完整性检查
+        }
       }
       if (!text && args.filePath) {
         text = await readTextFile(args.filePath)
@@ -331,6 +345,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         projectResidueTerms: [...projectTerms, ...extraTerms],
         original: typeof args.original === 'string' && args.original.trim() ? args.original : undefined,
         styleProfile,
+        bibText,
       })
       const verbose = args.verbose ?? cfg.verboseByDefault
       return formatReport(report, { verbose })
@@ -340,10 +355,10 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.tools.register(defineTool({
     name: 'writing_style_profile',
     description:
-      'v0.6 Author Style Profile：从作者历史论文（.md/.tex/.txt）统计写作风格指标（句长中位数/标准差、段长中位数、破折号/hedge/连接词密度），' +
-      '输出风格档案 JSON——零网络零 LLM，纯本地统计。' +
+      'v0.6/v1.3 Author Style Profile：从作者历史论文（.md/.tex/.txt）统计写作风格指标——句长中位数/标准差/变异系数、短句比例/长句比例、段长中位数/标准差/变异系数、破折号/hedge/连接词密度，' +
+      '输出"节奏指纹"风格档案 JSON——零网络零 LLM，纯本地统计。' +
       '用法：对作者以前发表的论文目录/文件调用本工具得到 profile JSON，' +
-      '再在 writing_audit 的 styleProfile 参数传入该 JSON，即可检测新稿件句长分布是否偏离作者历史风格。' +
+      '再在 writing_audit 的 styleProfile 参数传入该 JSON，即可检测新稿件句长分布是否偏离作者历史风格（median 漂移 + std/CV 整齐度对比，v1.3 adaptive threshold）。' +
       `（dsh-plugin-writing-guard v${PLUGIN_VERSION}）`,
     parameters: {
       filePath: { type: 'string', description: '作者历史论文的文件路径（.md/.tex/.txt；与 learnDir 二选一）' },
@@ -480,7 +495,18 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
           const pre = preimages.get(key)
           preimages.delete(key)
           const original = pre && pre.path === target ? pre.content : (await stateLoaded).baselines.get(target)?.content
-          report = auditText(afterContent, { profile, projectResidueTerms: projectTerms, original })
+          // v1.3：自动路径也探测同目录 .bib（local-citation-integrity 数据源）
+          let bibText: string | undefined
+          try {
+            const dir = path.dirname(target)
+            const bibs = (await fs.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.bib'))
+            if (bibs.length > 0) {
+              bibText = await fs.readFile(path.join(dir, bibs[0]), 'utf8')
+            }
+          } catch {
+            // 无 .bib / 目录不可读：跳过
+          }
+          report = auditText(afterContent, { profile, projectResidueTerms: projectTerms, original, bibText })
           // 更新基线缓存（供下次写入对比）。v0.9：按 UTF-8 字节计，超过单文件上限
           // 不持久化（不截断——截断的 baseline 会产生假的 integrity 结果）；
           // 本次编辑仍可使用 execution preimage。

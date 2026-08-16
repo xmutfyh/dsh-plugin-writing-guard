@@ -4,6 +4,45 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-16
+
+### Added — 篇章统计层（第 10 轮评审 9.55/10：局部规则 → 篇章统计 → 科学完整性）
+
+- **`paragraph-rhythm`（段落节奏，aggregate）**: 一次计算多个信号——一句成段比例（碎片化，
+  ≥35% 且 ≥3 段）、段长中位数/标准差/CV、长段 outlier 比例（拥塞，> 中位数 2.5 倍 ≥2 段）、
+  连续 ≥3 段长度在中位数 ±15% 内的 run 数（过度整齐，≥2 处）。节奏统计只用 prose-only
+  段落（排除标题/图片/作者行/表格残留等版式元素行，避免把正常版式误报为碎片化）。
+- **`sentence-rhythm-uniformity`（句长节奏均匀）**: 段落内连续 ≥3 句长度在局部中位数 ±15% 内
+  且全文 ≥2 处 → "节奏过匀"（variance 过小 + 连续发生）；有作者 styleProfile 时对比历史
+  `sentenceLengthStd`（当前 std < 历史 60% → 更整齐）——adaptive threshold 原则：
+  有 profile 用历史分布，无 profile 用 conservative heuristic。
+- **`repeated-discourse-scaffold`（重复逻辑脚手架）**: 段落抽象为枚举签名（首先→其次→最后 =
+  `1-2-4`、第一→第二→第三 = `1-2-3`、First→Second→Third、从X层面→从Y层面 = `P-P-P`），
+  同一签名在 ≥2 个独立段落出现 → 模板化。单次列举正常（candidate）。
+- **`punctuation-scaffold-overload`（标点脚手架过载）**: 同一句内 ≥3 类结构标点
+  （括号/冒号/分号/引号/破折号）聚集；豁免符号定义列表（`1) RMSE: ...; ...`、
+  `(a)(b)(c)` 图注、`Level-2 (unseen-combination): ...` 等论文标准格式）。
+- **`coined-framework-language`（自创框架词，形式规则）**: A-B-C 短线框架（"输入—处理—输出"）、
+  同一段 ≥2 个不同 XX化/XX力、≥3 个不同 XX性（可持续性/系统性单独出现是正当术语）、
+  XX闭环/赋能机制——全部 candidate。
+- **`generic-claim-candidate`（正确但空泛）**: 多弱信号组合（抽象名词 ≥2 + 无实体/数值/引用 +
+  无方法动作 + 万能句型），≥3 信号同时满足才报；中英双语；candidate + low。
+- **`summary-cliche-positional`（总结套话位置感知）**: 不新增词表——同一总结套话
+  （综上所述/in conclusion）在每个小节末尾反复出现（≥2 个小节末尾）才报。
+- **`local-citation-integrity`（本地引用完整性，零网络确定性）**: `\cite{key}` ↔ `.bib` 条目
+  存在性、`\ref` ↔ `\label` 对应、bib 条目缺 title/year/author、同一 DOI 对应多个 key。
+  写作/自动审计路径都会探测目标文件同目录的 `.bib`；"该文献是否支持这句话"明确留在插件边界外。
+- **StyleProfile 升级为"节奏指纹"**: 新增 `sentenceLengthCV`、`shortSentenceRatio`、
+  `longSentenceRatio`、`paragraphLengthStd`、`paragraphLengthCV`（向后兼容，旧档案缺省跳过）。
+- **`PLUGIN_VERSION` 1.2.3 → 1.3.0**，版本源统一（package.json/CHANGELOG/SKILL/rules.ts）。
+
+### Tests
+
+- 246 → 276: sections 81–88（paragraph-rhythm 三类 TP/TN、sentence-rhythm run+author TP/TN、
+  scaffold 中英 TP/TN + signature 单元、punctuation overload TP/TN + 定义列表豁免、
+  coined framework TP/TN（含 XX性 正当术语 TN）、generic claim 中英 TP/TN、
+  citation integrity 解析/TP/TN/无 bib no-op、summary-cliche positional TP/TN）。
+
 ## [1.2.3] - 2026-08-16
 
 ### Added — claim identity in fingerprints + unpaired inventory (1.2.2 评审 9.55/10 的三项)
