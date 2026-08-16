@@ -4,6 +4,45 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-16
+
+### Added — two-axis epistemic model & clause-level multi-claim drift
+
+Follow-up review (0.8 分析，8.3/10) fixes + the 0.9 design items. All still deterministic.
+
+- **Two-axis claim model** (analysis §"0.9 设计问题"): the single 0–5 ladder is split into
+  **causal force** (consistent with(0) < associated(1) < predicts(2) < contributes(3) <
+  affects(4) < causes(5)) and **evidential force** (hedge(-1) < suggest(1) < indicate(2) <
+  support(3) < show(4) < demonstrate(5) < establish/confirm(6) < prove/guarantee(7)).
+  "confirmed an association" is now causal=association + evidential=strong, not a blunt causal L5.
+  Hedge removal ("may be associated" → "is associated") is itself an evidential drift.
+- **Clause-level multi-claim drift** (`ClaimSpan` + `splitClauses`): sentences are segmented on
+  `; , while whereas although but and` (with "between/among X and Y" enumeration protection) and
+  each clause's causal/evidential levels are aligned positionally — fixing the structural miss
+  where "X caused A, while Y may be associated with B" → "Y caused B" was masked by whole-sentence
+  max-level comparison.
+- **Alignment-similarity tiers** (analysis item 3): sim ≥0.70 → high confidence / invariant;
+  0.55–0.70 → medium / invariant; 0.45–0.55 → low / **candidate** (explicit "please verify" note).
+  Completely rewritten sentences (below alignment) can no longer produce false drift.
+- **preimage keyed by `exec.token`** (analysis item 4): concurrent edits to the same manuscript no
+  longer overwrite each other's before-snapshot; path check inside the entry guards token reuse.
+- **UTF-8 baseline byte accounting** (analysis item 5): `Buffer.byteLength` everywhere; per-file
+  cap enforced on write — oversized baselines are skipped (never truncated: truncation would
+  fabricate integrity diffs); execution preimage still covers the current edit.
+- **P0 hotfix** (analysis item 1): `writing_rules` brief no longer tells agents to mechanically
+  replace "we believe" with "the results show" (that loop taught the agent to create epistemic
+  drift the lock then flags). Calibrated wording: author interpretation → "One possible
+  explanation is… / This finding may reflect… / We interpret this as…"; "the results show" only
+  when evidence directly supports it.
+- Tests 170 → 183: two-axis extraction, multi-claim drift, evidential drift, hedge removal,
+  simTier boundaries, low-sim rewrite safety, baseline byte accounting & eviction.
+
+### Changed
+
+- `FINGERPRINT_VERSION` 4 → 5 (claim-drift fingerprints now include axis: `epistemic:claim:causal:1->5`).
+- Rule patterns use non-capturing groups (capture groups polluted `.match()` results).
+- GitHub/npm description & English README repositioned: **deterministic manuscript integrity guard**.
+
 ## [0.8.0] - 2026-08-16
 
 ### Added — Epistemic Lock & findingKind（manuscript integrity guard 升级）

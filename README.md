@@ -163,6 +163,20 @@ adapted，署名见 [THIRD_PARTY.md](THIRD_PARTY.md)）与 Evidence-Bound（MIT�
 > 许可：Epistemic Lock 的 claim-strength ladder 思想改编自 Yila-AI/sci-ssci-skills（Apache-2.0），
 > candidate 判定模型借鉴 Evidence-Bound（MIT）——见 THIRD_PARTY.md。
 
+## v0.9 双轴主张模型 + 子句级多主张（0.8 复盘 8.3/10 的修复）
+
+| 修复项 | 内容 |
+|---|---|
+| **双轴模型** | 单一 0–5 阶梯拆成 **因果力**（consistent with(0) < associated(1) < predicts(2) < contributes(3) < affects(4) < causes(5)）与 **证据力**（hedge(-1) < suggest(1) < indicate(2) < support(3) < show(4) < demonstrate(5) < establish/confirm(6) < prove(7)）："confirmed an association" = 因果力关联 + 证据力强，不再误报因果 L5；"may be associated" → "is associated"（hedge 移除）本身也是证据力漂移 |
+| **子句级多主张** | 按 `; , while whereas although but and` 切分子句（保护 between/among X and Y 枚举），逐子句对齐——"X caused A, while Y may be associated with B" → "Y caused B" 不再被整句最高层掩盖 |
+| **对齐相似度分档** | ≥0.70 → high/invariant；0.55–0.70 → medium/invariant；0.45–0.55 → low/**candidate**（提示人工复核）；整句重写（低于对齐阈值）不再产生假漂移 |
+| **preimage 按 exec.token 键控** | 同一文件并发 edit 不串扰 before/after；条目内 path 校验防 token 复用 |
+| **基线 UTF-8 字节核算** | `Buffer.byteLength` 计字节；单文件超限不持久化（不截断——截断会产生假 diff），本次编辑仍用 execution preimage |
+| **P0：rulesBrief 残留修复** | "we believe" 不再机械建议改成 "the results show"（那会教会 Agent 制造漂移再被锁抓住）——改为 "One possible explanation is… / This finding may reflect… / We interpret this as…"，证据直接支持时才用 "the results show" |
+
+> 定位（v0.9）：**deterministic manuscript integrity guard**——不是检测"AI 写得像不像人"，
+> 而是检测"AI 在帮科研人员改文字时，有没有悄悄改掉 science"。
+
 ## 密度阈值（v0.3.3）
 
 频率规则采用 **每千语言单位** 密度：英文规则按英文词数、中文规则按 CJK 字数（双语文件不互相稀释），

@@ -87,17 +87,23 @@ description: >-
 - 纪律边界（ESR）：不得为了"学术自信"删除真实的证据缺口、失效模式、条件限制——
   局限是证据透明度的一部分，只改措辞不改事实。
 
-## 7. 科学完整性锁（v0.8，Epistemic Lock——Scholarship Lock 2.0）
+## 7. 科学完整性锁（v0.8/v0.9，Epistemic Lock——Scholarship Lock 2.0）
 
 > 数字没变 ≠ 没改坏。语言润色不得改变 science——无论往强还是往弱。
 
-- **主张强度阶梯**（改编自 Yila-AI/sci-ssci-skills，Apache-2.0，见 THIRD_PARTY.md）：
-  `consistent with / may suggest`(0) < `is associated with`(1) < `predicts`(2) < `contributes to`(3)
-  < `affects / leads to / reduces`(4) < `causes / demonstrates / proves`(5)。
-  润色不得静默沿阶梯移动："was associated with" → "caused" 即使数字没变也是科学内容变化；
-  "reduced" → "may be associated with" 同样改变结论。恢复原强度，除非作者显式授权。
-  例外：`was associated with reduced mortality` 里的 reduced/increased/improved 是形容词修饰，
-  不升级主张强度（仍为关联层）。
+- **双轴主张模型（v0.9）**（改编自 Yila-AI/sci-ssci-skills，Apache-2.0，见 THIRD_PARTY.md）：
+  - **因果力**：`consistent with`(0) < `is associated with`(1) < `predicts`(2) < `contributes to`(3)
+    < `affects / leads to / reduces`(4) < `causes`(5)；
+  - **证据力**：hedge（may/might/could，-1）< `suggest`(1) < `indicate`(2) < `support`(3) <
+    `show`(4) < `demonstrate`(5) < `establish/confirm`(6) < `prove/guarantee`(7)。
+  - 两轴独立检测："confirmed an association" = 因果力关联 + 证据力强，不是因果 L5；
+    "was associated with" → "caused" 是因果力漂移；"suggested" → "confirmed" 是证据力漂移；
+    "may be associated" → "is associated"（hedge 移除）也是证据力变化。
+- **子句级多主张（v0.9）**：按 `; , while whereas although but and` 切分子句逐子句对齐——
+  "X caused A, while Y may be associated with B" → "Y caused B" 必须检出（Y 的关联→因果），
+  整句最高层掩盖不了局部漂移。`between/among X and Y` 枚举中的 and 不切分。
+- **对齐相似度分档（v0.9）**：≥0.70 → high/invariant；0.55–0.70 → medium/invariant；
+  0.45–0.55 → low/CANDIDATE（提示人工复核）；整句重写（低于对齐阈值）不产生假漂移。
 - **否定守恒**：`No significant association` → `A significant association` 会翻转阴性/零结果。
   no / not / did not / without / non-significant 标记被删除即 HIGH；凭空引入否定也需核对。
 - **零结果守恒**：`did not improve` / `no significant difference` / `remained unchanged` 是数据——
@@ -107,7 +113,7 @@ description: >-
 - **命中性质（findingKind）**：
   - `INVARIANT`（🔴 科学不变量被改动：数字/引用/主张强度/否定/scope）——立即处理；
   - `VIOLATION`（明确违规：修改过程残留、自黑免责）——应当修正；
-  - `CANDIDATE`（防御性候选：we do not claim / stacked hedge…）——cue ≠ verdict：
+  - `CANDIDATE`（防御性候选或低相似度漂移）——cue ≠ verdict：
     可能承担正当的 claim 边界（scope/证据状态/因果边界/竞争解释），处置为
     KEEP / TIGHTEN / REFRAME / RELOCATE / CUT / QUERY，不确定就 QUERY，不要自动删除；
   - `ADVISORY`（纯文体：长句/密度/格式）——可保留并说明理由。

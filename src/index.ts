@@ -81,7 +81,7 @@ const DEFAULT_PROJECT_TERMS = ['source_map', 'reader 锚点', 'iteration_log', '
 // ---------- v0.5 incremental lint 状态持久化 ----------
 
 /** 指纹算法版本：指纹规则变化时递增，旧 state 清空重建（防止升级后制造假 resolved+added） */
-const FINGERPRINT_VERSION = 4
+const FINGERPRINT_VERSION = 5
 // 插件版本单点定义在 src/rules.ts 的 PLUGIN_VERSION（state 标记与工具描述共用，避免多处硬编码漂移）
 
 interface StateFileShape {
@@ -93,10 +93,15 @@ interface StateFileShape {
   baselines?: Record<string, { content: string; ts: number }>
 }
 
-/** 基线缓存上限：≤20 个文件、单文件 ≤512KB、总量 ≤4MB（超限按 ts 淘汰最旧） */
+/** 基线缓存上限：≤20 个文件、单文件 ≤512KB、总量 ≤4MB（按 UTF-8 字节计，超限按 ts 淘汰最旧） */
 const BASELINE_MAX_FILES = 20
 const BASELINE_MAX_BYTES_PER_FILE = 512 * 1024
 const BASELINE_MAX_TOTAL_BYTES = 4 * 1024 * 1024
+
+/** v0.9：UTF-8 字节数（中文一个汉字 3 字节，不能用 content.length 当字节数） */
+export function baselineByteSize(content: string): number {
+  return Buffer.byteLength(content, 'utf8')
+}
 
 interface LoadedState {
   fingerprints: Map<string, Set<string>>
@@ -120,7 +125,7 @@ async function loadState(stateFile: string): Promise<LoadedState> {
     }
     const baselines = new Map<string, { content: string; ts: number }>()
     for (const [file, b] of Object.entries(data.baselines ?? {})) {
-      if (b && typeof b.content === 'string' && b.content.length <= BASELINE_MAX_BYTES_PER_FILE) {
+      if (b && typeof b.content === 'string' && baselineByteSize(b.content) <= BASELINE_MAX_BYTES_PER_FILE) {
         baselines.set(file, { content: b.content, ts: typeof b.ts === 'number' ? b.ts : 0 })
       }
     }
@@ -130,10 +135,10 @@ async function loadState(stateFile: string): Promise<LoadedState> {
   }
 }
 
-/** 基线缓存淘汰：超文件数或总字节上限时删除 ts 最旧的条目 */
-function pruneBaselines(baselines: Map<string, { content: string; ts: number }>): void {
+/** 基线缓存淘汰：超文件数或总字节上限时删除 ts 最旧的条目（UTF-8 字节计） */
+export function pruneBaselines(baselines: Map<string, { content: string; ts: number }>): void {
   let total = 0
-  for (const b of baselines.values()) total += b.content.length
+  for (const b of baselines.values()) total += baselineByteSize(b.content)
   while (baselines.size > BASELINE_MAX_FILES || total > BASELINE_MAX_TOTAL_BYTES) {
     let oldest: string | null = null
     let oldestTs = Infinity
@@ -144,7 +149,7 @@ function pruneBaselines(baselines: Map<string, { content: string; ts: number }>)
       }
     }
     if (!oldest) break
-    total -= baselines.get(oldest)!.content.length
+    total -= baselineByteSize(baselines.get(oldest)!.content)
     baselines.delete(oldest)
   }
 }
@@ -260,8 +265,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     ? path.resolve(cfg.stateFile)
     : path.join(os.homedir(), '.dsh', 'plugins', 'dsh-plugin-writing-guard', 'state.json')
   const stateLoaded = loadState(stateFile).catch(() => emptyState())
-  // v0.8：本次修改前的文本（pre-execute 捕获；优先级高于持久化基线缓存）
-  const preimages = new Map<string, { content: string; ts: number }>()
+  // v0.9：preimage 按 exec.token 键控（同一文件并发 edit 不串扰；分析建议），
+  // 内部保留 path 校验；token 缺失时回退到文件路径键。优先级高于持久化基线缓存。
+  const preimages = new Map<string, { path: string; content: string; ts: number }>()
 
   ctx.tools.register(defineTool({
     name: 'writing_audit',
@@ -439,7 +445,10 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         const agent = exec as { agent?: { id?: string; session?: { header?: { cwd?: string } } } }
         if (!agent.agent || typeof agent.agent.id !== 'string') return next()
         if (!isPaperFile(target, agent.agent.session?.header?.cwd)) return next()
-        preimages.set(target, { content: await fs.readFile(target, 'utf8'), ts: Date.now() })
+        // v0.9：exec.token 作为 key（DSH 官方 execution state 范式），path 存进条目用于校验
+        const token = (exec as { token?: unknown }).token
+        const key = typeof token === 'string' && token ? token : target
+        preimages.set(key, { path: target, content: await fs.readFile(target, 'utf8'), ts: Date.now() })
       } catch {
         // 新文件或不可读：无 preimage（首次写入无基线；后续写入由基线缓存兜底）
       }
@@ -462,15 +471,22 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         try {
           const profile = detectDocumentProfile(target)
           const afterContent = await readTextFile(target)
-          // v0.8 自动 Scholarship/Epistemic Lock：preimage（本次修改前）优先，否则用基线缓存
-          const preimage = preimages.get(target)?.content
-          preimages.delete(target)
-          const original = preimage ?? (await stateLoaded).baselines.get(target)?.content
+          // v0.9 自动 Scholarship/Epistemic Lock：preimage（exec.token 键控）优先，否则用基线缓存；
+          // preimage 条目需与本次目标文件同路径（token 复用/路径变化时不误配 before/after）
+          const token = (exec as { token?: unknown }).token
+          const key = typeof token === 'string' && token ? token : target
+          const pre = preimages.get(key)
+          preimages.delete(key)
+          const original = pre && pre.path === target ? pre.content : (await stateLoaded).baselines.get(target)?.content
           report = auditText(afterContent, { profile, projectResidueTerms: projectTerms, original })
-          // 更新基线缓存（供下次写入对比；二进制/不可读文件不更新）
+          // 更新基线缓存（供下次写入对比）。v0.9：按 UTF-8 字节计，超过单文件上限
+          // 不持久化（不截断——截断的 baseline 会产生假的 integrity 结果）；
+          // 本次编辑仍可使用 execution preimage。
           const baselines = (await stateLoaded).baselines
-          baselines.set(target, { content: afterContent, ts: Date.now() })
-          pruneBaselines(baselines)
+          if (baselineByteSize(afterContent) <= BASELINE_MAX_BYTES_PER_FILE) {
+            baselines.set(target, { content: afterContent, ts: Date.now() })
+            pruneBaselines(baselines)
+          }
         } catch {
           return decision // 二进制/不可读文件跳过
         }

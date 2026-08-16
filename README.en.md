@@ -3,9 +3,15 @@
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
-> DeepSeek Harness (DSH) academic-writing guard: automatically checks papers for common AI writing
-> style, revision-process residue, defensive writing, and mechanical sentence patterns — while you write,
-> and protects research facts during polishing (v0.6 Scholarship Lock).
+> **A deterministic manuscript integrity guard for AI-assisted academic revision.**
+> It detects when language polishing silently changes the science — numbers, citations,
+> claim strength (causal & evidential force), negation/null findings, scope boundaries — and flags
+> mechanical AI writing while protecting your authorial style. Local regex/statistics only:
+> zero network, zero LLM.
+>
+> DeepSeek Harness (DSH) 论文写作守卫：在论文撰写和修改过程中自动检查常见 AI 写作风格、
+> 修改残留、防御性表达与机械化句式，并在润色时保护科研事实与科学主张完整性
+> （Scholarship Lock + Epistemic Lock）。
 
 **Works with: Chinese papers, English papers, SCI manuscripts, theses, academic writing and polishing.**
 
@@ -17,15 +23,18 @@ Instead it works continuously:
 It provides three native DSH tools:
 
 - `writing_rules` — load the writing-discipline cheat sheet before writing
-- `writing_audit` — scan text for AI-style patterns, revision residue, defensive writing, LLM-overused expressions and structural tells; v0.6 adds Scholarship Lock (`original` arg) and author style profile (`styleProfile` arg)
+- `writing_audit` — scan text for AI-style patterns, revision residue, defensive writing, LLM-overused expressions and structural tells; `original` arg enables **Scholarship Lock** (numbers/citations/Figure/Table/DOI conservation) + **Epistemic Lock** (claim-strength drift on causal & evidential axes, negation/null-result flips, scope-boundary removal), each hit tagged with its finding kind (INVARIANT / VIOLATION / CANDIDATE / ADVISORY); `styleProfile` adds author-style drift detection
 - `writing_style_profile` — learn an author's writing style from previous papers (sentence-length distribution, densities), zero LLM
 
 and optionally auto-audits paper files (`.md` / `.tex` / `.txt`) after every `write` / `edit`
-(v0.5 incremental mode), feeding only *new* high-risk issues back to the agent.
+(v0.5 incremental mode + v0.8 automatic before/after capture via `tools/pre-execute`, keyed by
+`exec.token` for concurrent edits), feeding only *new* high-risk issues back to the agent.
 
-> Positioning: not an "AI detector", but a writing linter that knows what kind of document it is
-> looking at and can explain *why* it flags something.
-> All rules are local regex/statistics — zero network, zero LLM calls, millisecond latency.
+> Positioning: not an "AI detector", not just a writing linter — a **deterministic manuscript
+> integrity guard**. It does not tell the model *how* to write; it independently checks, after the
+> model has touched the paper, that nothing scientific was changed and that mechanical patterns
+> were not introduced. All rules are local regex/statistics — zero network, zero LLM calls,
+> millisecond latency.
 
 ## Why Writing Guard instead of a Humanizer?
 

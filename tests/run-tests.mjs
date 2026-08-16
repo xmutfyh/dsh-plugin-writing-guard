@@ -4,8 +4,8 @@
  * 目标：每条核心规则至少有一个 true-positive 和一个 true-negative 断言。
  * 运行：node tests/run-tests.mjs
  */
-import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport } from '../lib/rules.js'
-import { isPaperFile } from '../lib/index.js'
+import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier } from '../lib/rules.js'
+import { isPaperFile, baselineByteSize, pruneBaselines } from '../lib/index.js'
 
 let pass = 0
 let fail = 0
@@ -938,6 +938,73 @@ console.log('=== 53. v0.8 findingKind 分类 + 科学完整性回归报告 ===')
 
   const ok = auditText('The accuracy improved to 89.1%.', { profile: 'manuscript', original: 'The accuracy improved to 89.1%.' })
   check('integrity all-preserved (0 drift, 0 hits)', (ok.integrity?.numericChanged ?? 99) === 0 && ok.summary.total === 0, JSON.stringify(ok.integrity))
+}
+
+console.log('=== 54. v0.9 双轴模型 + 子句级多主张（ClaimSpan）===')
+{
+  // 因果力 / 证据力拆分："confirmed an association" 不是因果 L5
+  const spans = extractClaimSpans('The analysis confirmed an association between X and Y.')
+  check('two-axis: confirmed-an-association = causal 1 + evidential 6', spans.length === 1 && spans[0].causalLevel === 1 && spans[0].evidentialLevel === 6, JSON.stringify(spans))
+
+  // 多主张句：整句 max level 曾掩盖 Y 的漂移（v0.8 结构性漏报）
+  const multi = auditText(
+    'X caused A, while Y caused B.',
+    { profile: 'manuscript', original: 'X caused A, while Y may be associated with B.' },
+  )
+  check('multi-claim drift TP (Y: association→causation in clause 2)', hasRule(multi, 'claim-drift'), JSON.stringify(multi.hits.map((h) => h.snippet)))
+
+  // 证据力漂移：suggested → confirmed
+  const evi = auditText(
+    'The analysis confirmed an association between X and Y.',
+    { profile: 'manuscript', original: 'The analysis suggested an association between X and Y.' },
+  )
+  const eviHit = evi.hits.find((h) => h.ruleId === 'claim-drift')
+  check('evidential drift TP (suggested→confirmed, axis=evidential)', hasRule(evi, 'claim-drift') && eviHit?.label.includes('证据力'), JSON.stringify(eviHit?.snippet))
+
+  // hedge 移除 = 证据力抬高（-1 → 0）
+  const hedge = auditText(
+    'X is associated with Y.',
+    { profile: 'manuscript', original: 'X may be associated with Y.' },
+  )
+  check('hedge removal TP (may → none, evidential drift)', hasRule(hedge, 'claim-drift'), JSON.stringify(hedge.hits.map((h) => h.snippet)))
+
+  // 子句切分工具
+  const clauses = extractClaimSpans('X caused A, while Y may be associated with B.')
+  check('extractClaimSpans splits clauses', clauses.length === 2 && clauses[0].causalLevel === 5 && clauses[1].causalLevel === 1, JSON.stringify(clauses.map((c) => [c.clause, c.causalLevel])))
+}
+
+console.log('=== 55. v0.9 对齐相似度分档（0.70/0.55/0.45）===')
+{
+  check('simTier 0.80 → high/invariant', simTier(0.8).confidence === 'high' && simTier(0.8).kind === 'invariant' && simTier(0.8).severity === 'high')
+  check('simTier 0.60 → medium/invariant', simTier(0.6).confidence === 'medium' && simTier(0.6).kind === 'invariant')
+  check('simTier 0.45 → low/candidate', simTier(0.45).confidence === 'low' && simTier(0.45).kind === 'candidate' && simTier(0.45).severity === 'medium')
+
+  // 低相似度安全：整句重写（cosine < 0.45）不产生假漂移
+  const rewritten = auditText(
+    'Our findings prove the intervention works in practice.',
+    { profile: 'manuscript', original: 'The experiment demonstrated a clear improvement across all tested conditions.' },
+  )
+  check('low-sim rewrite → no false claim-drift', !hasRule(rewritten, 'claim-drift'), JSON.stringify(rewritten.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 56. v0.9 基线 UTF-8 字节核算 + 淘汰 ===')
+{
+  // 中文 3 字节/字（content.length 会算成 1）
+  check('baselineByteSize zh = 3 bytes/char', baselineByteSize('中') === 3, `bytes=${baselineByteSize('中')}`)
+  check('baselineByteSize en = 1 byte/char', baselineByteSize('abc') === 3, `bytes=${baselineByteSize('abc')}`)
+
+  // 淘汰：总量超限时删除最旧
+  const map = new Map([
+    ['a.md', { content: 'x'.repeat(1000), ts: 1 }],
+    ['b.md', { content: 'y'.repeat(1000), ts: 2 }],
+    ['c.md', { content: 'z'.repeat(1000), ts: 3 }],
+  ])
+  // 注入一个小总量上限场景无法直接改常量；改为验证 prune 对文件数上限（20）的行为：
+  const many = new Map()
+  for (let i = 0; i < 25; i++) many.set(`f${i}.md`, { content: 'abc', ts: i })
+  pruneBaselines(many)
+  check('pruneBaselines caps at 20 files', many.size === 20, `size=${many.size}`)
+  check('pruneBaselines evicts oldest first', !many.has('f0.md') && many.has('f24.md'))
 }
 
 console.log('')

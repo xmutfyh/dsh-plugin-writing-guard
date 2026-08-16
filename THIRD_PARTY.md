@@ -7,9 +7,11 @@ dsh-plugin-writing-guard 本体为 MIT；以下借鉴均以"思想/机制适配"
 
 - **来源**：<https://github.com/Yila-AI/sci-ssci-skills>（`skills/science-research-writing` 的
   claim-strength ladder 与 `scripts/check_draft_invariants.py` 的 invariant 思想）
-- **借鉴内容（v0.8）**：
+- **借鉴内容（v0.8 / v0.9）**：
   - claim-strength ladder（uncertainty < association < prediction < contribution < effect < causation）
-    的层级化主张强度模型 → 本插件的 `CLAIM_LADDER`（adapted：层级定义与正则词表为本项目实现）；
+    的层级化主张强度模型 → 本插件的 `CAUSAL_LADDER`（adapted：层级定义与正则词表为本项目实现）；
+  - v0.9 按其"因果强度 ≠ 证据强度"的区分扩展为**双轴模型**（因果力 + 证据力），
+    demonstrate/prove/establish/confirm 移入证据力轴——"confirmed an association" 不再误判为因果 L5；
   - "修改不得静默沿梯子向任何方向移动；科学主张变化需要新的证据和作者授权"原则 → Epistemic Lock
     的 `claim-drift` 规则（上升与下降均按 invariant 报）；
   - negation / null-result / 数字 / citation 的 invariant 守恒思想 → `negation-drift` 与既有
