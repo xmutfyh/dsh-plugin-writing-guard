@@ -4,6 +4,40 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-16
+
+### Added — claim alignment credibility (1.1 评审 9.4/10 的 4+2 项)
+
+- **Raw-threshold fix (P0)**: clause pairing now gates on **raw** cosine ≥ 0.3; the subject bonus
+  only ranks among candidates that already pass — "The model predicts mortality" vs "The model was
+  initialized using pretrained weights" (same subject, raw sim ~0.29) is no longer bound as the
+  same claim.
+- **nullResultAdded independent + two-way dedup (P0)**: null-result additions get their own event
+  stream instead of being folded into `negationAdded`; overlap dedup (keep the more specific
+  null-result marker) now runs on both removed and added directions.
+- **Scope-prefix attachment**: "In this cohort, / Under these conditions, / Among participants,
+  / 在本实验中…" no longer become standalone ClaimSpans — they attach to the following claim span
+  (scope markers belong to the claim they qualify).
+- **Fragment-aware clause segmentation**: relative clauses ("The model, which was trained on
+  Dataset A, …") and subjectless predicate fragments ("…, achieved higher accuracy.") merge into
+  the main clause — spans are closer to real claims than comma-delimited fragments.
+- **Alignment-uncertain candidate**: an unmatched clause carrying protected markers
+  (negation/null/scope/evidence-status) no longer degrades back to a sentence-level bag-of-markers
+  comparison. Without a reliable claim identity, the engine refuses to assert preservation or
+  removal and emits a `claim-alignment-uncertain` review candidate instead.
+- **EvidenceStatus canonical enum direction**: canonicalization now folds self-report variants
+  (self-report/self-reports/self-reported/self reported) and modelled/modeled into single
+  canonical keys.
+- **Short-document positional fallback**: when sentence alignment yields zero pairs but both sides
+  have ≤3 sentences, position = identity — marker conservation runs positionally (claim drift still
+  requires lexical similarity), so "Z improved" → "Z did not improve" (sim≈0.35) is no longer a
+  miss; version-gap thresholding uses minSim 0.35 so short rewrites are not misread as full rewrites.
+
+### Tests
+
+- 218 → 225: raw-threshold TP, alignment-uncertain TP (+no-false-verdict), null-added TP + dedup,
+  scope-prefix attachment, relative-clause merge.
+
 ## [1.1.0] - 2026-08-16
 
 ### Added — claim-bound integrity (1.0 评审 P0/P1/P2)

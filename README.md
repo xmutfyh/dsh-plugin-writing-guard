@@ -220,6 +220,19 @@ Scientific tokens          Scientific commitments
 
 测试 209 → 218 项。
 
+## v1.2 claim alignment credibility（配对可信度，1.1 评审 9.4/10）
+
+| 能力 | 检测什么 | 例子 |
+|---|---|---|
+| **raw 阈值修复** 🔴 | 配对门槛看 raw cosine ≥0.3，主语奖励只参与排名 | `The model predicts mortality` vs `The model was initialized…`（同主语但词面不似）不再被绑成同一 claim |
+| **nullResultAdded 独立** | 零结果新增独立事件 + removed/added 双向去重 | `Z improved` → `Z did not improve` 只报更具体的零结果事件 |
+| **scope 前缀附着** | In this cohort/Under these conditions/在本实验中 不单独成 span，附着到后续 claim | scope markers 归属真正的 claim |
+| **fragment-aware 切分** | 相对从句（which was trained…）与无主语谓语片段（achieved higher accuracy）并入主句 | span 更接近真实 claim |
+| **alignment-uncertain** 🟡 | 含受保护 markers 的未配对子句不再退化回整句袋子比较——生成 review candidate | 没有可靠 claim identity 时不假定 commitments 被保留 |
+| **短文档位置兜底** | ≤3 句且零对齐时位置即身份，marker 守恒按位置跑 | `Z improved` → `Z did not improve`（sim≈0.35）不再漏报；version-gap 判定用低阈值对齐 |
+
+测试 218 → 225 项。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——
@@ -359,7 +372,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 218 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒/claim-bound 交换回归）
+npm test   # 自动先 build 再跑 225 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

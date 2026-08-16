@@ -1261,6 +1261,48 @@ console.log('=== 68. v1.1 多轴 delta 单 hit（causal+evidential+hedge 不丢�
   check('multi-axis deltas preserved', snippet.includes('因果力') && snippet.includes('证据力') && snippet.includes('hedge'), snippet.slice(0, 200))
 }
 
+console.log('=== 69. v1.2 raw threshold 不被 subject bonus 绕过 ===')
+{
+  // 同主语但 raw cosine < 0.3：不得被错误绑成同一 claim（1.1.1 P0）
+  const r = auditText(
+    'The model was initialized using pretrained weights.',
+    { profile: 'manuscript', original: 'The model predicts mortality.' },
+  )
+  check('raw-threshold TP (same subject, low raw sim → no pairing)', !hasRule(r, 'claim-drift'), JSON.stringify(r.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 70. v1.2 alignment-uncertain（未配对受保护主张不退化 sentence bag）===')
+{
+  const r = auditText(
+    'In this cohort, the treatment improved survival, and the follow-up lasted one year.',
+    { profile: 'manuscript', original: 'In this cohort, the treatment improved survival, and no adverse events were reported.' },
+  )
+  check('alignment-uncertain TP (unmatched protected claim)', hasRule(r, 'claim-alignment-uncertain'), JSON.stringify(r.hits.map((h) => h.snippet)))
+  // 不得用 after 全句的 marker 假装否定被保留/被删——不产生 negation-drift
+  check('alignment-uncertain: no false negation verdict', !hasRule(r, 'negation-drift'), JSON.stringify(r.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 71. v1.2 nullResultAdded 独立 + 双向去重 ===')
+{
+  const r = auditText(
+    'Z did not improve.',
+    { profile: 'manuscript', original: 'Z improved.' },
+  )
+  check('null-added TP (independent event)', hasRule(r, 'negation-drift'), JSON.stringify(r.hits.map((h) => h.label)))
+  // "did not" 与 "did not improve" 只报更具体的零结果事件（added 方向也去重）
+  const labels = r.hits.filter((h) => h.ruleId === 'negation-drift').map((h) => h.label)
+  check('null-added dedup (specific event only)', labels.length === 1 && labels[0].includes('零结果'), JSON.stringify(labels))
+}
+
+console.log('=== 72. v1.2 fragment-aware 子句（scope 前缀附着 + 相对从句合并）===')
+{
+  const withScope = extractClaimSpans('In this cohort, the treatment improved survival.')
+  check('scope-prefix attached to claim span', withScope.length === 1 && withScope[0].scopeMarkers.length > 0, JSON.stringify(withScope.map((s) => [s.clause, s.scopeMarkers])))
+
+  const withRelative = extractClaimSpans('The model, which was trained on Dataset A, achieved higher accuracy.')
+  check('relative clause merged into main clause', withRelative.length === 1 && withRelative[0].clause.includes('which was trained'), JSON.stringify(withRelative.map((s) => s.clause)))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {
