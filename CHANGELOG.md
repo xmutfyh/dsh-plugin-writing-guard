@@ -4,6 +4,37 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-08-16
+
+### Fixed — automatic Guard delivery (1.2.1 评审 P0×2 + P1×2 + P1/P2)
+
+- **Event-level fingerprints (P0)**: `hitFingerprint` no longer infers "aggregate" from
+  `paragraphIndex === -1`. A whitelist (`AGGREGATE_RULE_IDS`: density/section/style-profile
+  rules) keeps aggregate semantics; Scholarship/Epistemic integrity events now fingerprint on
+  their `matchText` — "5 mg→6 mg" and "10 mg→12 mg" are distinct events, so the incremental
+  auto-audit no longer treats a *new* scientific change as the same old issue and stays silent.
+  `FINGERPRINT_VERSION` 5 → 6 (old state rebuilt).
+- **Invariants always surface (P0)**: `filterReport` keeps every `findingKind === 'invariant'`
+  hit regardless of the severity filter — conservative mode's `high` gate now applies to
+  style/rhetorical/formatting issues only. MEDIUM invariants (added citations/numbers/DOIs,
+  added negation/null findings, evidence-status drift, scope drift) are no longer silently
+  dropped from the auto-audit notification.
+- **SCOPE lastIndex bug (P1)**: `isScopeOnlyFragment` now uses a `/g`-free `SCOPE_TEST_RE`
+  clone — consecutive scope fragments ("In this cohort, under these conditions, …") no longer
+  fail the second `.test()` call.
+- **Subject bonus requires non-empty subjects (P1)**: `'' === ''` no longer grants +0.3
+  (pure-Chinese candidates vs mixed-script candidates no longer rank wrongly).
+- **Version-gap keeps a Global Scholarship Inventory (P1/P2)**: when alignment F1 < 0.2,
+  line-level pairing is skipped (it would fabricate "5 mg→7 mg" pairs), but the full-document
+  multiset counts for citations/DOIs/figures/tables/numbers are still computed and reported
+  ("引用：移除 12 / 新增 17；DOI：移除 2 / 新增 3…") for human structural review.
+
+### Tests
+
+- 233 → 240: distinct event fingerprints + diffAudit non-collapse + aggregate preserved,
+  invariant-survives-filter / candidate-still-filtered, multi-scope lastIndex regression,
+  version-gap inventory.
+
 ## [1.2.1] - 2026-08-16
 
 ### Fixed — Scholarship Lock hit-emission gaps (1.2 评审 P0) & precision

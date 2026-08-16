@@ -245,6 +245,18 @@ Scientific tokens          Scientific commitments
 
 测试 225 → 233 项。
 
+## v1.2.2 自动 Guard 交付修复（1.2.1 评审：引擎 9.5/10，delivery 8.3/10 → 补上）
+
+| 能力 | 修复 |
+|---|---|
+| **event-level 指纹** 🔴 | integrity 事件按 matchText 指纹（AGGREGATE_RULE_IDS 白名单保留全文统计类）——`5 mg→6 mg` 与 `10 mg→12 mg` 是独立事件，增量自动审计不再把新科研修改当"旧问题"静默 |
+| **invariant 永不静默** 🔴 | `filterReport` 始终保留 `findingKind=invariant`——conservative 的 high 门槛只作用于文体问题；MEDIUM invariant（新增引用/数字/DOI、新增否定/零结果、证据状态漂移）默认进自动通知 |
+| **SCOPE lastIndex 修复** | `SCOPE_TEST_RE`（无 /g 副本）——连续 scope 前缀不再漏附着 |
+| **subject bonus 非空** | 纯中文空主语不再白拿 +0.3（中英混写排序不偏差） |
+| **version-gap 全局清单** | 行级配对跳过但全文 multiset 计数仍报：`引用：移除 12 / 新增 17；DOI：移除 2 / 新增 3…`——供人工结构级核对 |
+
+测试 233 → 240 项。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——
@@ -384,7 +396,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 233 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
+npm test   # 自动先 build 再跑 240 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 event-level/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

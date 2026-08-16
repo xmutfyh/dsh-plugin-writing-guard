@@ -1362,6 +1362,55 @@ console.log('=== 74. v1.2.1 self-report canonical + scope-only 统一分类 ==='
   check('scope-only unification (within this sample attached)', w.length === 1 && w[0].scopeMarkers.some((m) => m.toLowerCase().includes('within this sample')), JSON.stringify(w.map((s) => [s.clause, s.scopeMarkers])))
 }
 
+console.log('=== 75. v1.2.2 event-level 指纹（integrity 事件不再折叠）===')
+{
+  // 两个不同的 scholarship 事件必须产生不同指纹（v1.2.1 前共享 aggregate::scholarship-lock）
+  const h1 = auditText('The dose was 6 mg.', { profile: 'manuscript', original: 'The dose was 5 mg.' }).hits.find((h) => h.ruleId === 'scholarship-lock')
+  const h2 = auditText('The dose was 12 mg.', { profile: 'manuscript', original: 'The dose was 10 mg.' }).hits.find((h) => h.ruleId === 'scholarship-lock')
+  const fp1 = hitFingerprint(h1)
+  const fp2 = hitFingerprint(h2)
+  check('scholarship events get distinct fingerprints', h1 && h2 && fp1 !== fp2, `${fp1} vs ${fp2}`)
+
+  // 修复第一个后，第二个仍是 added（diffAudit 不折叠）
+  const prev = new Set([fp1])
+  const diff = diffAudit(prev, [h2])
+  check('diffAudit treats second event as new', diff.added.length === 1, JSON.stringify(diff.added.map((h) => hitFingerprint(h))))
+
+  // aggregate 规则仍用 aggregate 指纹
+  const agg = auditText('— — — — — —', { profile: 'manuscript' }).hits.find((h) => h.ruleId === 'em-dash-density')
+  check('aggregate rules keep aggregate fingerprint', agg && hitFingerprint(agg) === 'aggregate::em-dash-density', hitFingerprint(agg))
+}
+
+console.log('=== 76. v1.2.2 invariant 不受 severity filter 静默过滤 ===')
+{
+  // MEDIUM invariant（新增 cite）在 conservative(high) 过滤下必须保留
+  const r = auditText(
+    'This was demonstrated previously \\cite{Smith2024}.',
+    { profile: 'manuscript', original: 'This was demonstrated previously.' },
+  )
+  const filtered = filterReport(r, 'high')
+  check('invariant MEDIUM survives filter(high)', filtered.hits.some((h) => h.ruleId === 'scholarship-lock'), JSON.stringify(filtered.hits.map((h) => [h.ruleId, h.severity, h.findingKind])))
+
+  // 非 invariant 的 MEDIUM 仍按 severity 过滤
+  const r2 = auditText('The revised model uses ΔP. 本文并非要证明。真正重要的从来不是X而是Y。', { profile: 'manuscript' })
+  const f2 = filterReport(r2, 'high')
+  check('candidate MEDIUM still filtered by severity', !f2.hits.some((h) => h.ruleId === 'not-x-but-y-zh'), JSON.stringify(f2.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 77. v1.2.2 SCOPE lastIndex + version-gap inventory ===')
+{
+  // /g+test() lastIndex 回归：连续 scope fragments 第二个不再漏
+  const multi = extractClaimSpans('In this cohort, under these conditions, X improved.')
+  check('multiple scope prefixes attach (lastIndex safe)', multi.length === 1 && multi[0].scopeMarkers.length === 2, JSON.stringify(multi.map((s) => [s.clause, s.scopeMarkers])))
+
+  // version-gap 仍输出全局科研实体清单
+  const before = 'The first study examined drying kinetics in a porous micromodel under three temperatures. The second study focused on salt precipitation and its effect on permeability evolution.'
+  const after = 'This review synthesizes evidence on fracture self-sealing in caprocks during CO2 geological storage. We organize the literature into four functional levels of sealing recovery. \\cite{Smith2024} appears here.'
+  const gap = auditText(after, { profile: 'manuscript', original: before })
+  const gh = gap.hits.find((h) => h.ruleId === 'version-gap')
+  check('version-gap includes global inventory', gh && gh.snippet.includes('全局科研实体变化'), gh?.snippet?.slice(0, 200))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {
