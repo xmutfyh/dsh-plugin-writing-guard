@@ -4,7 +4,7 @@
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
 > DeepSeek Harness (DSH) 论文写作守卫：在论文撰写和修改过程中自动检查常见 AI 写作风格、
-> 修改残留、防御性表达与机械化句式。
+> 修改残留、防御性表达与机械化句式，并在润色时保护科研事实（Scholarship Lock）。
 
 **适用于：中文论文、英文论文、SCI manuscript、毕业论文、学术写作与论文润色。**
 
@@ -21,10 +21,11 @@
 
 **写作前提供规则 → 写作过程中自动守卫 → 修改后自动审计。**
 
-它提供两个 DSH 原生工具：
+它提供三个 DSH 原生工具：
 
 - `writing_rules`：写作前加载学术写作纪律
-- `writing_audit`：检查论文中的 AI-style patterns、revision residue、defensive writing、LLM 高频表达及结构化写作痕迹
+- `writing_audit`：检查论文中的 AI-style patterns、revision residue、defensive writing、LLM 高频表达及结构化写作痕迹；v0.6 起支持 Scholarship Lock（传 `original` 对比润色前后科研事实）与作者风格档案（`styleProfile`）
+- `writing_style_profile`：从作者历史论文统计写作风格指标（句长/密度），零 LLM
 
 并支持在 `.md` / `.tex` / `.txt` 论文文件被 `write` / `edit` 修改后自动执行审计（v0.5 增量模式），将高风险问题反馈给 Agent。
 
@@ -100,10 +101,28 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 |---|---|
 | 修改过程残留 | "revised model"、"as requested"、"we have updated"、"本轮/投稿前/审稿人要求" |
 | 主张校准 | "we do not claim"、"本文并非要证明"、自我削弱词；研究局限性正当陈述不报警（ICMJE 要求） |
-| 修辞模式 | "不是X而是Y"/"not X but Y"、rather than 滥用、绝对化定义、三连排比 |
+| 修辞模式 | "不是X而是Y"/"not X but Y"、rather than 滥用、绝对化定义、三连排比、重复绕圈 |
 | LLM 关联词 | delve/tapestry/testament/leverage/harness 等（密度规则，单次出现不报警） |
 | 学术文体 | we believe/think、模糊词、抽象副词；"significantly" 仅提示复核统计语境 |
-| 格式 | 破折号密度（范围连字符不算）、冒号标题 |
+| 格式 | 破折号密度（范围连字符不算）、冒号标题、Unicode 数学符号（LaTeX 工作流） |
+
+## v0.6 学术写作质量守卫
+
+定位升级：从"AI 风格 Linter"到"在 Agent 修改学术论文时，持续保护科研事实、作者风格和写作质量"。全部依旧本地正则/统计，零网络零 LLM：
+
+| 能力 | 检测什么 | 例子 |
+|---|---|---|
+| **Scholarship Lock** 🔴 | 润色/改写前后科研事实被改动：数字、百分数、p 值、置信区间、单位、`\cite`/`\ref`、Figure/Table 编号、DOI | `87.3% → 89.1%` 直接 HIGH：语言润色不得改数字；恢复原值或显式确认 |
+| **防御饱和（hedge 密度）** | may/might/could/possibly/potentially 密度 ≥5 次且 ≥300/千句——每个结论都附 caveat | 按句归一，讨论段正常 hedging 不误伤（ICMJE） |
+| **限定词堆叠** | 一条 claim 套多层保险 | `may potentially suggest` → 只留一层 |
+| **超长句 + 从句堆叠** | 英文 >35 词且 ≥3 从句标记（which/that/while/because…）；中文 >80 字且 ≥5 逗号且 ≥3 连接词 | 一句话承载过多独立论点 → 拆句 |
+| **重复绕圈** | 同段句子 token 余弦相似 ≥0.72 且后句无新增证据（数字/引用/实体） | 同一观点换三种说法 → 删重复圈 |
+| **作者风格档案** | `writing_style_profile` 学习作者历史论文；新稿件句长分布显著偏离时提示 | "当前句长中位数 38 vs 作者历史 22" |
+| **强主张缺证据** | prove/establish/confirm/guarantee 附近 ±120 字符无数字/统计量/图表引用 | 提示补充证据锚点，非判定错误 |
+| **连续句首连接词** | 同一段连续 ≥3 句以 Moreover/Furthermore/Additionally 开头 | 机械推进感 |
+| **Unicode 数学符号** | LaTeX 正文中 ₁₂₃ ²³ α β × − 等字符 | 建议改用数学模式 |
+
+> 原则（来自 v0.6 设计评审）：不针对具体模型写规则（GPT-5.6 风格、Opus 风格之类——模型会变，行为模式不会）；有证据依据的 hedging 是正确的学术表达，本工具不是"反 hedge 工具"。
 
 ## 密度阈值（v0.3.3）
 
@@ -133,8 +152,9 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 
 | 工具 | 用途 |
 |---|---|
-| `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose、projectResidueTerms（临时追加项目内部词表，仅本次调用生效）；返回按严重度+置信度排序的问题清单与全文统计 |
+| `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose、projectResidueTerms、original（v0.6 Scholarship Lock：修改前原文，对比科研实体变化）、styleProfile（v0.6 作者风格档案 JSON）；返回按严重度+置信度排序的问题清单与全文统计 |
 | `writing_rules` | 返回写作纪律速查（含 profile 与密度说明） |
+| `writing_style_profile` | v0.6：从作者历史论文（filePath/learnDir）统计风格指标（句长中位数/标准差、段长、破折号/hedge/连接词密度），输出 JSON 供 writing_audit 的 styleProfile 使用 |
 
 ### 真实输出演示
 
@@ -230,7 +250,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 104 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性回归）
+npm test   # 自动先 build 再跑 134 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

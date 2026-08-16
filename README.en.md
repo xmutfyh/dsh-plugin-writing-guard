@@ -4,7 +4,8 @@
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
 > DeepSeek Harness (DSH) academic-writing guard: automatically checks papers for common AI writing
-> style, revision-process residue, defensive writing, and mechanical sentence patterns — while you write.
+> style, revision-process residue, defensive writing, and mechanical sentence patterns — while you write,
+> and protects research facts during polishing (v0.6 Scholarship Lock).
 
 **Works with: Chinese papers, English papers, SCI manuscripts, theses, academic writing and polishing.**
 
@@ -13,10 +14,11 @@ Instead it works continuously:
 
 **rules before writing → guard while writing → audit after edits.**
 
-It provides two native DSH tools:
+It provides three native DSH tools:
 
 - `writing_rules` — load the writing-discipline cheat sheet before writing
-- `writing_audit` — scan text for AI-style patterns, revision residue, defensive writing, LLM-overused expressions and structural tells
+- `writing_audit` — scan text for AI-style patterns, revision residue, defensive writing, LLM-overused expressions and structural tells; v0.6 adds Scholarship Lock (`original` arg) and author style profile (`styleProfile` arg)
+- `writing_style_profile` — learn an author's writing style from previous papers (sentence-length distribution, densities), zero LLM
 
 and optionally auto-audits paper files (`.md` / `.tex` / `.txt`) after every `write` / `edit`
 (v0.5 incremental mode), feeding only *new* high-risk issues back to the agent.
@@ -97,10 +99,28 @@ community word lists delve/tapestry/testament/leverage):
 |---|---|
 | revision residue | "revised model", "as requested", "we have updated", Chinese 本轮/投稿前/审稿人要求 |
 | claim calibration | "we do not claim", Chinese 本文并非要证明, self-deprecation; legitimate limitations are NOT flagged (ICMJE) |
-| rhetorical patterns | "不是X而是Y"/"not X but Y", "rather than" overuse, absolutist definitions, rule of three |
+| rhetorical patterns | "不是X而是Y"/"not X but Y", "rather than" overuse, absolutist definitions, rule of three, restatement loops |
 | LLM-associated words | delve/tapestry/testament/leverage/harness etc. (density rule — a single occurrence is fine) |
 | academic style | we believe/think, vague quantifiers, abstract adverbs; "significantly" only prompts review of statistical context |
-| formatting | em-dash density (range en-dashes excluded), colon titles |
+| formatting | em-dash density (range en-dashes excluded), colon titles, Unicode math symbols (LaTeX workflow) |
+
+## v0.6 Academic-writing quality guard
+
+Position upgrade: from an "AI-style linter" to a guard that **protects research facts, author style, and writing quality while an agent edits a paper**. Still 100% local regex/statistics — zero network, zero LLM:
+
+| capability | what it detects | example |
+|---|---|---|
+| **Scholarship Lock** 🔴 | research facts changed during polishing: numbers, percentages, p-values, CIs, units, `\cite`/`\ref`, Figure/Table numbers, DOI | `87.3% → 89.1%` → HIGH: language polishing must not change numbers; restore or explicitly confirm |
+| **Defensive saturation (hedge density)** | may/might/could/possibly/potentially ≥5 and ≥300/1k sentences — a caveat on every conclusion | sentence-normalized; legitimate hedging in Discussion is fine (ICMJE) |
+| **Hedge stacking** | multiple layers of insurance on one claim | `may potentially suggest` → keep one layer |
+| **Overlong + clause-stacked sentences** | EN: >35 words and ≥3 clause markers (which/that/while/because…); ZH: >80 chars and ≥5 commas and ≥3 connectives | split sentences, one claim per sentence |
+| **Restatement loops** | same-paragraph sentences with token-cosine ≥0.72 and no new evidence (numbers/citations/entities) in the later ones | delete redundant circles |
+| **Author style profile** | `writing_style_profile` learns the author's historical style; drift in sentence-length distribution is flagged | "current median 38 vs author 22" |
+| **Strong claim without evidence anchor** | prove/establish/confirm/guarantee with no number/statistic/table/figure citation within ±120 chars | check for an anchor, not a verdict |
+| **Consecutive sentence-initial connectives** | ≥3 consecutive sentences starting with Moreover/Furthermore/Additionally in one paragraph | mechanical progression |
+| **Unicode math symbols** | ₁₂₃ ²³ α β × − characters in LaTeX prose | use math mode instead |
+
+> Principle (v0.6 design review): never write rules for a specific model (GPT-5.6 style, Opus style — models change, behaviors don't); evidence-based hedging is correct academic expression, this tool is not an "anti-hedge" tool.
 
 ## Density thresholds (v0.3.3)
 
@@ -136,8 +156,9 @@ Reports show `🔴 HIGH · conf high`, so you know which findings are determinis
 
 | tool | purpose |
 |---|---|
-| `writing_audit` | scan text/file; args: text/filePath, profile, verbose, projectResidueTerms (temporary project-internal vocabulary, current call only); returns issues sorted by severity+confidence plus full-text stats |
+| `writing_audit` | scan text/file; args: text/filePath, profile, verbose, projectResidueTerms, original (v0.6 Scholarship Lock: text before polishing — compares research entities), styleProfile (v0.6 author style profile JSON); returns issues sorted by severity+confidence plus full-text stats |
 | `writing_rules` | return the writing-discipline cheat sheet (profiles + density rules) |
+| `writing_style_profile` | v0.6: learn style metrics (sentence-length median/std, paragraph length, em-dash/hedge/connective density) from the author's previous papers (filePath/learnDir) → JSON for writing_audit's styleProfile |
 
 ### Real output demo
 
@@ -223,8 +244,8 @@ and prevents issues in the DSH paper workflow. They complement each other.
 ## Tests
 
 ```sh
-npm test   # builds first, then runs 104 TP/TN/edge-case assertions (zero-dependency runner,
-           # incl. isPaperFile/profile detection and fingerprint-stability regressions)
+npm test   # builds first, then runs 134 TP/TN/edge-case assertions (zero-dependency runner,
+           # incl. isPaperFile/profile detection, fingerprint-stability, Scholarship Lock and style-profile regressions)
 ```
 
 CI (GitHub Actions) runs build + full tests on every push / PR.
