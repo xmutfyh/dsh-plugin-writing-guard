@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Deterministic manuscript integrity guard for AI-assisted academic revision — protects scientific facts, claim strength (causal & evidential axes), negation, null findings, scope, citations and author style during polishing, while flagging mechanical AI writing (Scholarship Lock + Epistemic Lock; writing_audit / writing_rules / writing_style_profile; local, zero network, zero LLM)",
   "type": "module",
   "main": "lib/index.js",

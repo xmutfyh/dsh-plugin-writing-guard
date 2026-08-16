@@ -1025,6 +1025,38 @@ console.log('=== 57. v0.9.1 establish+基建名词（建立≠证明）上下文
   check('claim-evidence-proximity TP (well established claim)', hasRule(strong, 'claim-evidence-proximity'), JSON.stringify(strong.hits.map((h) => h.snippet)))
 }
 
+console.log('=== 58. v0.9.2 子句级相似度门槛（错位配对不误报）===')
+{
+  // 实测发现：修订重排子句时，位置配对会把引文子句↔正文子句配成一对，制造假漂移。
+  // 子句词面相似度 < 0.3 视为"不是同一主张的两个版本"，跳过 span 级漂移。
+  const reordered = auditText(
+    'Digital rock representations are widely used, and learning-based studies have shown that permeability can be predicted from pore images.',
+    { profile: 'manuscript', original: 'Learning-based studies have shown that permeability can be predicted from pore images, and digital rock representations are widely used.' },
+  )
+  check('clause-reorder TN (no false drift from positional mispair)', !hasRule(reordered, 'claim-drift'), JSON.stringify(reordered.hits.map((h) => h.snippet)))
+
+  // 真漂移仍然检出（词面相似子句）
+  const real = auditText(
+    'X caused A, while Y caused B.',
+    { profile: 'manuscript', original: 'X caused A, while Y may be associated with B.' },
+  )
+  check('clause-reorder TP (real drift still fires)', hasRule(real, 'claim-drift'), JSON.stringify(real.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 59. v0.9.2 Markdown 引用块不破坏句子切分 ===')
+{
+  // 实测发现：pandoc 转换的引用块 "pore image.\n>\n> As shown in Figure 4(a)..." 中
+  // 句号后跟 '>' 挡住切分前瞻，两句被合并成一句 → 子句配对错位 → 假漂移
+  const q = auditText(
+    'The input is a causal eight-frame sequence of preprocessed pore images.',
+    { profile: 'manuscript', original: 'The input is a preprocessed single-frame pore image.\n>\n> As shown in Figure 4(a), the model first extracts multi-scale morphological features.' },
+  )
+  check('blockquote sentence boundary preserved (no false drift)', !hasRule(q, 'claim-drift'), JSON.stringify(q.hits.map((h) => h.snippet)))
+
+  const sents = splitSentences('First sentence.\n>\n> Second sentence begins here. Third one.')
+  check('splitSentences splits across blockquote markers', sents.length === 3, JSON.stringify(sents))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

@@ -4,6 +4,21 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-08-16
+
+### Fixed (both discovered by auditing `pore_scale_revised_model_marked_v2`)
+
+- **Clause-misalignment false drifts**: positional clause pairing mispaired citation/infra clauses
+  when the revision reordered clauses (e.g. "predicted" vs a citation clause at 96% sentence sim).
+  Span-level drift now requires clause cosine ≥0.3 (sentence-level negation/scope locks unaffected).
+- **Markdown blockquote broke sentence splitting**: "pore image.\n>\n> As shown in Figure 4(a)…"
+  — the period lookahead failed on the `>` marker, merging two sentences into one and producing a
+  fake shown→∅ evidential drift. `splitSentences` now strips `>` blockquote markers first.
+
+### Tests
+
+- 188 → 190: clause-reorder TN/TP, blockquote sentence-boundary TP.
+
 ## [0.9.1] - 2026-08-16
 
 ### Fixed
