@@ -233,6 +233,18 @@ Scientific tokens          Scientific commitments
 
 测试 218 → 225 项。
 
+## v1.2.1 Scholarship Lock hit 补全 + 精度修复（1.2 评审 9.3/10 的 P0/P1）
+
+| 能力 | 修复 |
+|---|---|
+| **Scholarship Lock 全覆盖** 🔴 | `lockTypes` 补 `number`/`doi`；新增 `diff.added` hit 循环（凭空引入数字/引用/DOI/图表编号 → MEDIUM/invariant）——"5 mg 被删"、"DOI 被换"、"无引用→\cite{}" 不再只有摘要计数没有告警 |
+| **self-report canonical** | 正则支持空格变体（`self reported`）；self-report/reports/reported/self reported 折叠为同一 canonical key |
+| **位置兜底诚实化** | 短文档 fallback 事件携带**真实相似度** + `positionalFallback` 标记（报告明示"位置兜底，非词面对齐"） |
+| **scope-only 统一分类** | 删除 SCOPE_PREFIX_RE，`isScopeOnlyFragment` 直接复用 SCOPE_RE——scope 检测与附着不再两表分叉（`Within this sample,` 等全覆盖） |
+| **对齐 tokenizer 修复** | 句子对齐改用不滤停用词的 tokenization——`results/experiment/model` 是 claim 身份词，restatement 停用表曾导致含实体句对齐失败 |
+
+测试 225 → 233 项。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——
@@ -372,7 +384,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 225 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
+npm test   # 自动先 build 再跑 233 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

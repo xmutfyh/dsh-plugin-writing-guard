@@ -1303,6 +1303,65 @@ console.log('=== 72. v1.2 fragment-aware 子句（scope 前缀附着 + 相对从
   check('relative clause merged into main clause', withRelative.length === 1 && withRelative[0].clause.includes('which was trained'), JSON.stringify(withRelative.map((s) => s.clause)))
 }
 
+console.log('=== 73. v1.2.1 Scholarship Lock added/removed 全覆盖 ===')
+{
+  // number removed：5 mg 被删（1.2.1 前只进摘要不进 hit）
+  const rm = auditText(
+    'The dose was administered.',
+    { profile: 'manuscript', original: 'The dose was 5 mg.' },
+  )
+  check('scholarship number-removed TP', hasRule(rm, 'scholarship-lock'), JSON.stringify(rm.hits.map((h) => h.snippet)))
+
+  // number added：凭空新增 5 mg
+  const add = auditText(
+    'The dose was 5 mg.',
+    { profile: 'manuscript', original: 'The dose was administered.' },
+  )
+  check('scholarship number-added TP (MEDIUM)', hasRule(add, 'scholarship-lock') && add.hits.find((h) => h.ruleId === 'scholarship-lock')?.severity === 'medium', JSON.stringify(add.hits.map((h) => h.snippet)))
+
+  // DOI 替换
+  const doi = auditText(
+    'The dataset is archived at 10.5678/new-doi.',
+    { profile: 'manuscript', original: 'The dataset is archived at 10.1234/old-doi.' },
+  )
+  check('scholarship DOI-replacement TP', hasRule(doi, 'scholarship-lock'), JSON.stringify(doi.hits.map((h) => h.snippet)))
+
+  // 引用凭空新增
+  const cite = auditText(
+    'This was demonstrated previously \\cite{Smith2024}.',
+    { profile: 'manuscript', original: 'This was demonstrated previously.' },
+  )
+  check('scholarship cite-added TP', hasRule(cite, 'scholarship-lock'), JSON.stringify(cite.hits.map((h) => h.snippet)))
+
+  // Figure 新增
+  const fig = auditText(
+    'Figure 2 shows the results of the experiment.',
+    { profile: 'manuscript', original: 'The results of the experiment are reported here.' },
+  )
+  check('scholarship figure-added TP', hasRule(fig, 'scholarship-lock'), JSON.stringify(fig.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 74. v1.2.1 self-report canonical + scope-only 统一分类 ===')
+{
+  // self reported（空格）vs self-reported（连字符）：同一 canonical，不误报
+  const sr = auditText(
+    'Participants self reported improvement after the intervention.',
+    { profile: 'manuscript', original: 'Participants self-reported improvement after the intervention.' },
+  )
+  check('self-report canonical TN (space vs hyphen)', !hasRule(sr, 'evidence-status-drift'), JSON.stringify(sr.hits.map((h) => h.snippet)))
+
+  // self-reported vs reported：真状态变化仍报
+  const sr2 = auditText(
+    'Participants reported improvement after the intervention.',
+    { profile: 'manuscript', original: 'Participants self-reported improvement after the intervention.' },
+  )
+  check('self-report status change TP', hasRule(sr2, 'evidence-status-drift'), JSON.stringify(sr2.hits.map((h) => h.snippet)))
+
+  // scope-only 统一分类：within this sample（SCOPE_RE 全覆盖，无需第二张表）
+  const w = extractClaimSpans('Within this sample, treatment A improved survival.')
+  check('scope-only unification (within this sample attached)', w.length === 1 && w[0].scopeMarkers.some((m) => m.toLowerCase().includes('within this sample')), JSON.stringify(w.map((s) => [s.clause, s.scopeMarkers])))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

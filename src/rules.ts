@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.2.0'
+export const PLUGIN_VERSION = '1.2.1'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -394,7 +394,7 @@ const SCOPE_RE = /(?:within this (?:sample|cohort|study|dataset)|in this (?:coho
  *  reported/observed/measured/implemented/estimated/simulated 等。
  *  "participants reported improvement" ≠ "participants improved"：
  *  状态词消失或被替换，说明修改把一种证据来源状态变成了另一种（或直接声称）。 */
-const EVIDENCE_STATUS_RE = /\b(?:reported|self-?reported|self-?report(?:s|ed)?|observed|measured|recorded|detected|visualized|implemented|deployed|installed|estimated|simulated|modelled|modeled|calculated|derived|inferred|obtained)\b/gi
+const EVIDENCE_STATUS_RE = /\b(?:reported|self[\s-]?report(?:s|ed)?|observed|measured|recorded|detected|visualized|implemented|deployed|installed|estimated|simulated|modelled|modeled|calculated|derived|inferred|obtained)\b/gi
 
 /** 保守子句切分（分析建议：; , while whereas although but and）——v0.9 多主张检测的基础。
  *  "between X and Y / among A, B and C" 等枚举里的 and 用占位符保护，不作为子句边界。 */
@@ -411,8 +411,20 @@ export function splitClauses(sentence: string): string[] {
     .filter((c) => c.length > 0)
 }
 
-/** v1.2：scope 前缀短语（不单独当 ClaimSpan，attach 到后面的真正 claim span） */
-const SCOPE_PREFIX_RE = /^(?:in this (?:cohort|study|dataset|experiment|system)|under these conditions|among participants|in our (?:experiments?|study|dataset)|in the present (?:study|work|dataset)|in the current work|for the evaluated datasets?|在本研究中|在本样本中|在该队列中|在上述条件下|在研究期间|在本实验中|在当前工况下)/i
+/** v1.2.1：scope-only fragment 统一判定——直接复用 SCOPE_RE（不再维护第二张表，
+ *  避免 scope detector 与 scope attachment 越走越分叉），且 fragment 不含任何
+ *  因果/证据主张 marker（纯 scope 短语才附着到后续 claim）。 */
+function isScopeOnlyFragment(clause: string): boolean {
+  if (clause.length > 60) return false
+  if (!SCOPE_RE.test(clause)) return false
+  for (const rung of CAUSAL_LADDER) {
+    if (clause.match(rung.pattern)) return false
+  }
+  for (const rung of EVIDENTIAL_LADDER) {
+    if (clause.match(rung.pattern)) return false
+  }
+  return true
+}
 
 /** v1.2：相对从句（which/who/whose…）合并到前一个 clause（逗号切分产生的 fragment） */
 const RELATIVE_CLAUSE_RE = /^(?:which|who|whose|whom|where|when)\b/i
@@ -420,7 +432,7 @@ const RELATIVE_CLAUSE_RE = /^(?:which|who|whose|whom|where|when)\b/i
 /** v1.2：无主语 fragment——以动词形态开头的 clause（主句谓语延续）合并到前一个 claim */
 const VERB_LEAD_RE = /^(?:achieved|achieving|leads?|led|resulted|resulting|remained|remains?|was|were|is|are|followed|follows?|occurred|occurs?|became|becomes?|allowed|allowing|enabled|enabling|produced|producing|yielded|yielding)\b/i
 
-/** v1.2：fragment-aware 子句合并——scope 前缀 attach 到后续 claim；相对从句与无主语
+/** v1.2：fragment-aware 子句合并——scope-only 前缀 attach 到后续 claim；相对从句与无主语
  *  fragment（主句谓语延续）attach 到前驱 */
 function mergeClauseFragments(clauses: string[]): string[] {
   const out: string[] = []
@@ -434,7 +446,7 @@ function mergeClauseFragments(clauses: string[]): string[] {
       out[out.length - 1] = out[out.length - 1] + ' ' + c
       continue
     }
-    if (SCOPE_PREFIX_RE.test(c) && c.length <= 60) {
+    if (isScopeOnlyFragment(c)) {
       pendingScope = (pendingScope ? pendingScope + ' ' : '') + c
       continue
     }
@@ -579,15 +591,29 @@ export function extractEpistemicMarkers(sentence: string): EpistemicMarkers {
   return { claimLevel, ladderWords, negation, nullResult, scope }
 }
 
-/** 句对齐：贪心匹配 before→after（cosine ≥ minSim 且句位差 ≤ window）；返回配对索引 */
+/** v1.2.1：对齐用 tokenization——不滤停用词（"The results of the experiment" 的 results/
+ *  experiment 是科研实体词，滤掉会导致句子对齐相似度失真）；restatement-loop 的
+ *  tokenizeForSimilarity（stop 过滤版）保持语义相似度语义不变。 */
+function tokenizeRaw(text: string): Map<string, number> {
+  const freq = new Map<string, number>()
+  const bump = (t: string): void => { freq.set(t, (freq.get(t) ?? 0) + 1) }
+  for (const w of text.toLowerCase().match(/[a-z][a-z'-]*/g) ?? []) bump(w)
+  const cjk = text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []
+  for (let i = 0; i + 1 < cjk.length; i++) bump(cjk[i] + cjk[i + 1])
+  return freq
+}
+
+/** 句对齐：贪心匹配 before→after（cosine ≥ minSim 且句位差 ≤ window）；返回配对索引。
+ *  v1.2.1：使用 tokenizeRaw（不滤停用词）——对齐的职责是找同一句的两个版本，
+ *  results/model/study 等论文高频词恰恰是判断同句性的关键证据。 */
 export function alignSentences(
   before: string[],
   after: string[],
   minSim = 0.45,
   window = 4,
 ): Array<{ beforeIdx: number; afterIdx: number; sim: number }> {
-  const beforeToks = before.map(tokenizeForSimilarity)
-  const afterToks = after.map(tokenizeForSimilarity)
+  const beforeToks = before.map(tokenizeRaw)
+  const afterToks = after.map(tokenizeRaw)
   const used = new Set<number>()
   const pairs: Array<{ beforeIdx: number; afterIdx: number; sim: number }> = []
   for (let i = 0; i < before.length; i++) {
@@ -631,20 +657,20 @@ export interface EpistemicDrift {
   /** 主张沿因果/证据轴移动（up=变强 / down=变弱；任何方向都改变科学结论） */
   claimDrift: ClaimDrift[]
   /** 否定标记被删除（负/零结果可能被翻转）——claim-bound */
-  negationRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
+  negationRemoved: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
   /** 否定标记被引入 */
-  negationAdded: Array<{ before: string; after: string; marker: string; sim: number }>
+  negationAdded: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
   /** 零结果表述被删除 */
-  nullResultRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
+  nullResultRemoved: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
   /** v1.2：零结果表述被引入（独立字段，不再塞 negationAdded——便于双向去重） */
-  nullResultAdded: Array<{ before: string; after: string; marker: string; sim: number }>
+  nullResultAdded: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
   /** scope 边界消失（主张可能被泛化）——claim-bound */
-  scopeRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
+  scopeRemoved: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
   /** v1.1：scope 边界新增（主张可能被缩窄——"The treatment improves survival" → "In this cohort, …"） */
-  scopeAdded: Array<{ before: string; after: string; marker: string; sim: number }>
+  scopeAdded: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
   /** v1.0 证据状态漂移（reported/observed/measured…消失或被替换）——claim-bound */
-  evidenceStatusRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
-  evidenceStatusAdded: Array<{ before: string; after: string; marker: string; sim: number }>
+  evidenceStatusRemoved: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
+  evidenceStatusAdded: Array<{ before: string; after: string; marker: string; sim: number; positionalFallback?: boolean }>
   /** v1.2：含受保护 markers 的未配对主张（不要假定这些 commitments 被保留） */
   alignmentUncertain: Array<{ before: string; markers: string[]; sim: number }>
 }
@@ -653,6 +679,8 @@ export interface EpistemicDrift {
  *  英美拼写（modelled→modeled）被误判为两个不同 marker */
 const MARKER_CANON: Record<string, string> = {
   modeled: 'modelled',
+  'self-report': 'self-reported',
+  'self-reports': 'self-reported',
   'self reported': 'self-reported',
   'self report': 'self-reported',
   'self reports': 'self-reported',
@@ -733,20 +761,22 @@ export function diffEpistemic(before: string, after: string): EpistemicDrift {
     labelB: string,
     labelA: string,
     simForEvent: number,
+    opts?: { fallback?: boolean },
   ): void => {
+    const fb = opts?.fallback ? { positionalFallback: true } : {}
     const neg = diffMarkerLists(bSpan.negationMarkers, aMarkers.negation)
-    for (const marker of neg.removed) out.negationRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent })
-    for (const marker of neg.added) out.negationAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent })
+    for (const marker of neg.removed) out.negationRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
+    for (const marker of neg.added) out.negationAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
     const nul = diffMarkerLists(bSpan.nullMarkers, aMarkers.null)
-    for (const marker of nul.removed) out.nullResultRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent })
+    for (const marker of nul.removed) out.nullResultRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
     // v1.2：零结果新增走独立字段（不再塞 negationAdded，便于双向去重）
-    for (const marker of nul.added) out.nullResultAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent })
+    for (const marker of nul.added) out.nullResultAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
     const scp = diffMarkerLists(bSpan.scopeMarkers, aMarkers.scope)
-    for (const marker of scp.removed) out.scopeRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent })
-    for (const marker of scp.added) out.scopeAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent })
+    for (const marker of scp.removed) out.scopeRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
+    for (const marker of scp.added) out.scopeAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
     const es = diffMarkerLists(bSpan.evidenceStatusMarkers, aMarkers.evidenceStatus)
-    for (const marker of es.removed) out.evidenceStatusRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent })
-    for (const marker of es.added) out.evidenceStatusAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent })
+    for (const marker of es.removed) out.evidenceStatusRemoved.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
+    for (const marker of es.added) out.evidenceStatusAdded.push({ before: labelB, after: labelA, marker, sim: simForEvent, ...fb })
   }
 
   for (const { beforeIdx, afterIdx, sim } of pairs) {
@@ -861,8 +891,11 @@ export function diffEpistemic(before: string, after: string): EpistemicDrift {
   // v1.2：短文档位置配对兜底——句子级对齐失败（minSim 0.45）但双方句数相同且 ≤3 时，
   // 位置即身份（没有错配余地）：按位置配对跑 marker 守恒（claim-drift 仍要求词面相似，
   // 不在此兜底）——"Z improved" → "Z did not improve"（sim≈0.35）不再是漏报。
+  // v1.2.1：事件携带真实相似度（不再硬编码 0.5）+ positionalFallback 标记（报告明示
+  // "这是位置兜底，不是高可信词面对齐"）。
   if (pairs.length === 0 && bs.length === as.length && bs.length <= 3) {
     for (let i = 0; i < bs.length; i++) {
+      const realSim = cosineSimilarity(tokenizeRaw(bs[i]), tokenizeRaw(as[i]))
       const bSpans = extractClaimSpans(bs[i])
       const aSpans = extractClaimSpans(as[i])
       for (let k = 0; k < Math.min(bSpans.length, aSpans.length); k++) {
@@ -876,7 +909,8 @@ export function diffEpistemic(before: string, after: string): EpistemicDrift {
           },
           bSpans[k].clause.slice(0, 120),
           aSpans[k].clause.slice(0, 120),
-          0.5,
+          realSim,
+          { fallback: true },
         )
       }
     }
@@ -2402,7 +2436,8 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
       })
     } else {
     const diff = diffScholarship(opts.original, view.raw)
-    const lockTypes = new Set<ScholarshipType>(['cite', 'ref', 'figure', 'table', 'percent', 'pvalue', 'ci'])
+    // v1.2.1：lockTypes 补全 number/doi——"5 mg 被删"、"DOI 被换" 等不再只有摘要计数没有 hit
+    const lockTypes = new Set<ScholarshipType>(['number', 'percent', 'pvalue', 'ci', 'cite', 'ref', 'figure', 'table', 'doi'])
     for (const c of diff.changed) {
       hits.push({
         ruleId: 'scholarship-lock',
@@ -2430,10 +2465,28 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `科研实体消失（${SCHOLARSHIP_TYPE_LABEL[r.type]}）`,
         paragraphIndex: -1,
         snippet: r.value,
-        message: `修改后丢失了 ${SCHOLARSHIP_TYPE_LABEL[r.type]}：${r.value}。引用/图表编号不应在润色中被删除。`,
-        suggestion: '恢复被删除的引用/编号；如确为有意删除，请显式确认。',
+        message: `修改后丢失了 ${SCHOLARSHIP_TYPE_LABEL[r.type]}：${r.value}。数字/引用/图表编号/DOI 不应在润色中被删除。`,
+        suggestion: '恢复被删除的实体；如确为有意删除，请显式确认。',
         evidence: { type: 'heuristic' },
         matchText: `scholarship-removed:${r.type}:${r.value}`,
+      })
+    }
+    // v1.2.1：新增方向也生成 hit（MEDIUM——凭空新增数字/引用/DOI 同样需要作者确认）
+    for (const a of diff.added) {
+      if (!lockTypes.has(a.type)) continue
+      hits.push({
+        ruleId: 'scholarship-lock',
+        category: 'claim_calibration',
+        severity: 'medium',
+        confidence: 'medium',
+        findingKind: 'invariant',
+        label: `科研实体被引入（${SCHOLARSHIP_TYPE_LABEL[a.type]}）`,
+        paragraphIndex: -1,
+        snippet: a.value,
+        message: `修改后新增了 ${SCHOLARSHIP_TYPE_LABEL[a.type]}：${a.value}。语言润色不应凭空引入数字/引用/DOI——请确认这是有意的科学修改。`,
+        suggestion: '确认新增实体是作者授权的科学修改；若只是润色误加，删除它。',
+        evidence: { type: 'heuristic' },
+        matchText: `scholarship-added:${a.type}:${a.value}`,
       })
     }
 
@@ -2443,6 +2496,9 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     // 零结果、矛盾结果是数据，不得因削弱叙事而删除；scope 边界消失只要求核验。
     // v0.9：双轴（因果力/证据力）+ 子句级多主张 + 对齐相似度分档（≥0.70 high / ≥0.55 medium / ≥0.45 low）。
     const ed = diffEpistemic(opts.original, view.raw)
+    // v1.2.1：位置兜底事件标注（短文本位置对齐 ≠ 高可信词面对齐）
+    const fbSuffix = (d: { positionalFallback?: boolean }): string =>
+      d.positionalFallback ? '（短文本位置兜底对齐，非词面对齐——请人工复核）' : ''
     for (const d of ed.claimDrift) {
       // v1.1：单 hit 多轴 delta（causal+evidential+hedge 全保留，不静默丢轴）
       const up = d.levelAfter > d.levelBefore
@@ -2478,7 +2534,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `否定标记被删除（${d.marker}）——负/零结果可能被翻转`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: `修改后删除了否定标记（no/not/did not…）：阴性结果或零结果表述可能被悄悄翻转。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}`,
+        message: `修改后删除了否定标记（no/not/did not…）：阴性结果或零结果表述可能被悄悄翻转。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}${fbSuffix(d)}`,
         suggestion: '恢复否定标记；如科学结论确实改变，需作者显式授权并同步修改数字/统计量。',
         evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills invariant checker（adapted）' },
         matchText: `epistemic:negation-removed:${d.marker}`,
@@ -2494,7 +2550,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `否定标记被引入（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: '修改后引入了否定标记：原句未否定，现在被否定——核对这是否是作者的意图。',
+        message: `修改后引入了否定标记：原句未否定，现在被否定——核对这是否是作者的意图。${fbSuffix(d)}`,
         suggestion: '确认否定是作者授权的科学修改；语言润色不应凭空加入否定。',
         evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills invariant checker（adapted）' },
         matchText: `epistemic:negation-added:${d.marker}`,
@@ -2511,7 +2567,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `零结果表述被引入（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: `修改后引入了零结果表述（${d.marker}）：原句未否定结果，现在有了——核对这是否是作者的意图。`,
+        message: `修改后引入了零结果表述（${d.marker}）：原句未否定结果，现在有了——核对这是否是作者的意图。${fbSuffix(d)}`,
         suggestion: '确认零结果是作者授权的科学修改；语言润色不应凭空加入阴性结果。',
         evidence: { type: 'literature', source: 'Evidence-Bound: negative/null findings are data（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:null-added:${d.marker}`,
@@ -2545,7 +2601,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `零结果表述被删除（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: `修改后删除了零结果表述（${d.marker}）：阴性结果本身是数据，不应因削弱叙事而被删除。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}`,
+        message: `修改后删除了零结果表述（${d.marker}）：阴性结果本身是数据，不应因削弱叙事而被删除。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}${fbSuffix(d)}`,
         suggestion: '恢复零结果表述；负面、零、矛盾结果必须保留。',
         evidence: { type: 'literature', source: 'Evidence-Bound: negative/null findings are data（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:null-result-removed:${d.marker}`,
@@ -2562,7 +2618,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `scope 边界消失（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: `修改后 scope 边界标记（${d.marker}）消失了。不自动判错——请核验主张是否被泛化。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}`,
+        message: `修改后 scope 边界标记（${d.marker}）消失了。不自动判错——请核验主张是否被泛化。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}${fbSuffix(d)}`,
         suggestion: '若范围未变，恢复边界标记；若确实外推，需要新的证据与作者授权。',
         evidence: { type: 'literature', source: 'Evidence-Bound: scope conditions KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:scope-removed:${d.marker}`,
@@ -2579,7 +2635,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `scope 边界被引入（${d.marker}）——主张可能被缩窄`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: `修改后引入了 scope 边界标记（${d.marker}）：原句未限定范围，现在限定了——主张从一般陈述变成受限陈述，外部有效性可能被悄悄收窄。不自动判错，请核验。`,
+        message: `修改后引入了 scope 边界标记（${d.marker}）：原句未限定范围，现在限定了——主张从一般陈述变成受限陈述，外部有效性可能被悄悄收窄。不自动判错，请核验。${fbSuffix(d)}`,
         suggestion: '若范围确未改变，删除新增边界；若作者有意缩窄声明范围，显式确认。',
         evidence: { type: 'literature', source: 'Evidence-Bound: scope conditions KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:scope-added:${d.marker}`,
@@ -2600,7 +2656,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `证据状态消失（${d.marker}）——从"${d.marker}"变成直接声称`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: `修改后证据来源状态标记（${d.marker}）消失或被替换：例如 "participants reported improvement" 不能变成 "participants improved"——报告/观测/测量≠直接事实。不自动判错，请核验来源状态是否仍准确。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}`,
+        message: `修改后证据来源状态标记（${d.marker}）消失或被替换：例如 "participants reported improvement" 不能变成 "participants improved"——报告/观测/测量≠直接事实。不自动判错，请核验来源状态是否仍准确。${tier.kind === 'candidate' ? '句对齐相似度较低，请人工复核。' : ''}${fbSuffix(d)}`,
         suggestion: '若来源状态未变，恢复状态词（reported/observed/measured…）；状态确实改变时显式说明（如 modelled → observed 需要对应实验证据）。',
         evidence: { type: 'literature', source: 'Evidence-Bound: source-status distinction KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:evidence-status-removed:${d.marker}`,
@@ -2616,7 +2672,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         label: `证据状态被引入（${d.marker}）`,
         paragraphIndex: -1,
         snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
-        message: `修改后引入了证据状态标记（${d.marker}）：原句没有来源状态限定，现在有了——核对这是否是作者的意图。`,
+        message: `修改后引入了证据状态标记（${d.marker}）：原句没有来源状态限定，现在有了——核对这是否是作者的意图。${fbSuffix(d)}`,
         suggestion: '确认来源状态是作者授权的科学修改；语言润色不应凭空改变证据来源。',
         evidence: { type: 'literature', source: 'Evidence-Bound: source-status distinction KEEP（MIT，见 THIRD_PARTY.md）' },
         matchText: `epistemic:evidence-status-added:${d.marker}`,

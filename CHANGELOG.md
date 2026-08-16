@@ -4,6 +4,35 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-08-16
+
+### Fixed — Scholarship Lock hit-emission gaps (1.2 评审 P0) & precision
+
+- **Scholarship Lock full hit emission (P0)**: `lockTypes` now includes `number` and `doi` —
+  "5 mg deleted", "DOI replaced" previously only showed in the integrity summary without a
+  concrete hit. A new `diff.added` loop emits hits for every protected entity introduced
+  (citation/figure/table/number/DOI added out of nowhere) as MEDIUM/invariant — no more
+  "summary says ✗, details show nothing" mismatch. changed/removed stay HIGH.
+- **self-report canonical/regex fix (P1)**: `EVIDENCE_STATUS_RE` now matches `self reported`
+  (space variant) via `self[\s-]?report(?:s|ed)?`; `self-report`/`self-reports` fold into the
+  `self-reported` canonical key alongside the spaced forms.
+- **Positional fallback honesty (P1)**: short-document fallback events now carry the **real**
+  cosine similarity (no more hardcoded 0.5) and a `positionalFallback` flag — reports say
+  "short-text positional fallback, not high-confidence lexical alignment".
+- **Scope-only unification (1.3 preview)**: `SCOPE_PREFIX_RE` removed; `isScopeOnlyFragment`
+  reuses `SCOPE_RE` directly (plus "contains no causal/evidential marker" check) — the scope
+  detector and scope attachment can no longer drift apart. `Within this sample,` /
+  `during the study period,` etc. now attach to the following claim.
+- **Alignment tokenizer fix (found while testing)**: sentence alignment now uses a
+  stop-word-preserving tokenizer — `results`/`experiment`/`model` etc. are claim-identity words
+  and were being filtered by the restatement stop list, breaking alignment of entity-bearing
+  sentences. `tokenizeForSimilarity` (stop-filtered) remains for restatement-loop semantics.
+
+### Tests
+
+- 225 → 233: number-removed/added, DOI-replacement, cite-added, figure-added, self-report
+  canonical TN/TP, scope-only unification.
+
 ## [1.2.0] - 2026-08-16
 
 ### Added — claim alignment credibility (1.1 评审 9.4/10 的 4+2 项)
