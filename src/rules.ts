@@ -36,7 +36,7 @@ export type Severity = 'high' | 'medium' | 'low'
 export type Confidence = 'high' | 'medium' | 'low'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '0.5.2'
+export const PLUGIN_VERSION = '0.6.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -56,8 +56,8 @@ export interface Threshold {
   minCount?: number
   /** 每千单位阈值（denominator 见 unit） */
   perK?: number
-  /** 密度分母单位：'word'（默认，英文按词；中文用 Intl.Segmenter 切词）| 'char'（纯字符） */
-  unit?: 'word' | 'char'
+  /** 密度分母单位：'word'（默认，英文按词；中文用 Intl.Segmenter 切词）| 'char'（纯字符）| 'sentence'（v0.6 按句） */
+  unit?: 'word' | 'char' | 'sentence'
 }
 
 /** 语言适应的词/字计数（v0.3.1：不要用英文 whitespace-word 衡量中文） */
@@ -78,7 +78,11 @@ export function countWords(text: string): number {
 }
 
 /** 按规则单位计算密度分母（v0.3.3：language-aware——英文规则用英文词数、中文规则用 CJK 字数，双语文件不再互相稀释） */
-function denominatorForRule(text: string, rule: Rule, unit: 'word' | 'char' | undefined): number {
+function denominatorForRule(text: string, rule: Rule, unit: 'word' | 'char' | 'sentence' | undefined): number {
+  if (unit === 'sentence') {
+    // v0.6：句子单位（hedge 密度等按句归一）
+    return splitSentences(text).length
+  }
   if (unit === 'char') {
     // char 单位：优先用 CJK 字数（中文规则），比 text.length 更准（不含英文/标点/Markdown 符号）
     const { cjkChars } = countLexicalUnits(text)
@@ -91,6 +95,207 @@ function denominatorForRule(text: string, rule: Rule, unit: 'word' | 'char' | un
     if (rule.languages[0] === 'zh') return cjkChars
   }
   return englishWords + cjkChars
+}
+
+// ---------------------------------------------------------------------------
+// v0.6 sentence-level utilities（零依赖）
+// ---------------------------------------------------------------------------
+
+/** 句子切分（中英混合；不切分号——分号是句内分隔）。
+ *  半角句号只在后跟大写/中文时切（避免切坏 "Fig. 3"、"et al. (2020)"、"e.g."）；缩写点后跟小写不切。 */
+export function splitSentences(text: string): string[] {
+  return text
+    .split(/[。！？!?]+(?=\s|$|[\u4e00-\u9fffA-Z"'（(])|\.(?=\s+[A-Z\u4e00-\u9fff]|$)/u)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
+
+/** 中位数（排序后取中） */
+export function medianOf(arr: number[]): number {
+  if (arr.length === 0) return 0
+  const s = [...arr].sort((a, b) => a - b)
+  const m = s.length >> 1
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
+}
+
+/** 标准差（总体） */
+export function stdOf(arr: number[]): number {
+  if (arr.length === 0) return 0
+  const mu = arr.reduce((a, b) => a + b, 0) / arr.length
+  return Math.sqrt(arr.reduce((a, b) => a + (b - mu) ** 2, 0) / arr.length)
+}
+
+const SIM_STOP = new Set([
+  'the', 'a', 'an', 'of', 'to', 'in', 'and', 'is', 'are', 'was', 'were', 'that', 'this',
+  'with', 'for', 'on', 'as', 'by', 'at', 'from', 'it', 'its', 'we', 'our', 'be', 'been',
+  'can', 'may', 'have', 'has', 'had', 'not', 'but', 'or', 'which', 'their', 'they', 'them',
+  'than', 'these', 'those', 'such', 'into', 'over', 'between', 'while', 'using', 'used',
+  'use', 'via', 'per', 'after', 'before', 'due', 'more', 'most', 'however', 'therefore',
+  'thus', 'also', 'results', 'result', 'method', 'methods', 'model', 'data', 'paper', 'study',
+])
+
+/**
+ * v0.6 restatement-loop 相似度 token：英文按词（小写、去停用词），
+ * 中文按相邻 2-gram 字符（无空格语言无法按词）。
+ */
+export function tokenizeForSimilarity(sentence: string): Map<string, number> {
+  const freq = new Map<string, number>()
+  const bump = (t: string): void => { freq.set(t, (freq.get(t) ?? 0) + 1) }
+  const en = sentence.toLowerCase().match(/[a-z][a-z'-]*/g)
+  for (const w of en ?? []) {
+    if (!SIM_STOP.has(w)) bump(w)
+  }
+  const cjk = sentence.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []
+  for (let i = 0; i + 1 < cjk.length; i++) bump(cjk[i] + cjk[i + 1])
+  return freq
+}
+
+/** 余弦相似度（两个 token 频率向量） */
+export function cosineSimilarity(a: Map<string, number>, b: Map<string, number>): number {
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (const [k, v] of a) {
+    na += v * v
+    const w = b.get(k)
+    if (w) dot += v * w
+  }
+  for (const v of b.values()) nb += v * v
+  const d = Math.sqrt(na) * Math.sqrt(nb)
+  return d === 0 ? 0 : dot / d
+}
+
+/** 句子的科研证据实体（数字/百分数/引用/图表编号/大写实体）——restatement 判断"后句是否有新增" */
+function evidenceTokens(sentence: string): Set<string> {
+  const hits = sentence.match(/\b\d+(?:\.\d+)?%?|\b[A-Z][a-z]{2,}\b|\\cite|\\ref|Table\s*\d|Figure\s*\d/g) ?? []
+  return new Set(hits.map((t) => t.toLowerCase()))
+}
+
+/** v0.6 作者风格档案（从作者历史论文统计；零 LLM） */
+export interface StyleProfile {
+  /** 句长中位数（词/字合计） */
+  sentenceLengthMedian: number
+  /** 句长标准差 */
+  sentenceLengthStd: number
+  /** 段长中位数（词/字合计） */
+  paragraphLengthMedian: number
+  /** 破折号密度（/千词） */
+  emDashPerK: number
+  /** hedge 密度（/千词） */
+  hedgePerK: number
+  /** 连接词密度（/千词） */
+  connectivePerK: number
+}
+
+/** 从文本计算风格指标（作者历史或当前稿件皆可） */
+export function computeStyleProfile(text: string): StyleProfile {
+  const sentences = splitSentences(text)
+  const lens = sentences.map((s) => countWords(s))
+  const paraLens = text
+    .split(/\n{2,}/)
+    .map((p) => countWords(p.trim()))
+    .filter((n) => n > 0)
+  const words = countWords(text)
+  const perK = (n: number): number => (words > 0 ? Math.round((n / words) * 1000 * 100) / 100 : 0)
+  const hedgeRe = /\b(may|might|could|possibly|potentially|perhaps)\b/gi
+  const connRe = /\b(moreover|furthermore|additionally|however|therefore|thus|consequently|in addition)\b/gi
+  const emRe = /(——|—|–—)/g
+  return {
+    sentenceLengthMedian: medianOf(lens),
+    sentenceLengthStd: Math.round(stdOf(lens) * 100) / 100,
+    paragraphLengthMedian: medianOf(paraLens),
+    emDashPerK: perK((text.match(emRe) ?? []).length),
+    hedgePerK: perK((text.match(hedgeRe) ?? []).length),
+    connectivePerK: perK((text.match(connRe) ?? []).length),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// v0.6 Scholarship Lock：科研实体提取与前后对比（零 LLM，纯确定性）
+// ---------------------------------------------------------------------------
+
+export type ScholarshipType =
+  | 'number'   // 带单位数字（精度/测量值）
+  | 'percent'  // 百分数
+  | 'pvalue'   // p 值
+  | 'ci'       // 置信区间
+  | 'cite'     // \cite{...}
+  | 'ref'      // \ref{...}
+  | 'figure'   // Figure N
+  | 'table'    // Table N
+  | 'doi'      // DOI
+
+export interface ScholarshipEntity {
+  type: ScholarshipType
+  value: string
+}
+
+const SCHOLARSHIP_EXTRACTORS: [ScholarshipType, RegExp][] = [
+  ['cite', /\\cite\*?\{[^{}]*\}/g],
+  ['ref', /\\ref\*?\{[^{}]*\}/g],
+  ['figure', /\bFigures?\s*\d+[a-z]?\b/gi],
+  ['table', /\bTables?\s*\d+[a-z]?\b/gi],
+  ['percent', /\b\d+(?:\.\d+)?\s*%/g],
+  ['pvalue', /\bp\s*[<≤=]\s*0?\.?\d+/gi],
+  ['ci', /\b\d+(?:\.\d+)?\s*[–—-]\s*\d+(?:\.\d+)?\s*(?:CI|%|m|mm|nm|mL|ml|mg|µg|kg|g|s|ms|h|d|°C|K)\b/g],
+  ['doi', /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/gi],
+  ['number', /\b\d+(?:\.\d+)?\s*(?:mm|nm|cm|km|kg|g|mg|µg|μg|mL|ml|L|s|ms|h|d|°C|K|Hz|kHz|MHz|V|W|J|mol|M)\b/g],
+]
+
+/** 提取文本中的科研实体（Scholarship Lock 的数据源） */
+export function extractScholarshipEntities(text: string): ScholarshipEntity[] {
+  const out: ScholarshipEntity[] = []
+  for (const [type, re] of SCHOLARSHIP_EXTRACTORS) {
+    for (const m of text.matchAll(re)) out.push({ type, value: m[0].trim() })
+  }
+  return out
+}
+
+export interface ScholarshipChange {
+  type: ScholarshipType
+  before: string
+  after: string
+}
+
+export interface ScholarshipDiff {
+  /** 成对变化（同类型同数量时按顺序配对，如 87.3% → 89.1%） */
+  changed: ScholarshipChange[]
+  /** 消失的实体（citation/ref/图表编号等） */
+  removed: ScholarshipEntity[]
+  /** 新增的实体 */
+  added: ScholarshipEntity[]
+}
+
+/** v0.6 Scholarship Lock：对比修改前后的科研事实（数字/引用/图表编号/DOI） */
+export function diffScholarship(before: string, after: string): ScholarshipDiff {
+  const changed: ScholarshipChange[] = []
+  const removed: ScholarshipEntity[] = []
+  const added: ScholarshipEntity[] = []
+  const types: ScholarshipType[] = ['cite', 'ref', 'figure', 'table', 'percent', 'pvalue', 'ci', 'doi', 'number']
+  for (const t of types) {
+    const bv = extractScholarshipEntities(before).filter((e) => e.type === t).map((e) => e.value)
+    const av = extractScholarshipEntities(after).filter((e) => e.type === t).map((e) => e.value)
+    const bSet = new Set(bv)
+    const aSet = new Set(av)
+    const rm = bv.filter((v) => !aSet.has(v))
+    const ad = av.filter((v) => !bSet.has(v))
+    // 数值类实体按顺序配对为 changed（如 87.3% → 89.1%）
+    if (t === 'number' || t === 'percent' || t === 'pvalue' || t === 'ci') {
+      const n = Math.min(rm.length, ad.length)
+      for (let i = 0; i < n; i++) changed.push({ type: t, before: rm[i], after: ad[i] })
+      for (const v of rm.slice(n)) removed.push({ type: t, value: v })
+      for (const v of ad.slice(n)) added.push({ type: t, value: v })
+    } else {
+      for (const v of rm) removed.push({ type: t, value: v })
+      for (const v of ad) added.push({ type: t, value: v })
+    }
+  }
+  return { changed, removed, added }
+}
+
+const SCHOLARSHIP_TYPE_LABEL: Record<ScholarshipType, string> = {
+  number: '带单位数值', percent: '百分数', pvalue: 'p 值', ci: '置信区间',
+  cite: '\\cite 引用', ref: '\\ref 引用', figure: 'Figure 编号', table: 'Table 编号', doi: 'DOI',
 }
 
 export interface Rule {
@@ -132,6 +337,8 @@ export interface Rule {
   sectionBased?: boolean
   /** section-based 规则的触发阈值：命中章节数 ≥ 该值才报 */
   sectionThreshold?: number
+  /** v0.6：restatement-loop 专用规则（段内句子相似度检测，不走 density/段落扫描） */
+  restatementLoop?: boolean
 }
 
 export interface Hit {
@@ -554,6 +761,179 @@ const RULES: Rule[] = [
     segments: ['heading'],
     evidence: { type: 'heuristic' },
   },
+
+  // ================= v0.6 学术写作质量守卫 =================
+
+  {
+    id: 'hedge-density-en',
+    category: 'claim_calibration',
+    severity: 'medium',
+    confidence: 'low',
+    label: '防御性限定词密度过高（英文）',
+    pattern: /\b(may|might|could|possibly|potentially|perhaps|not necessarily|cannot rule out|should be interpreted with caution|we refrain from|we do not claim)\b/gi,
+    // v0.6：按句归一（unit: sentence）——每做结论都附 caveat 的"防御饱和"行为
+    threshold: { minCount: 5, perK: 300, unit: 'sentence' },
+    message: '防御性限定词（may/might/could/possibly/potentially…）密度过高（≥5 次且 ≥300/千句）：每做一个结论都附 caveat，文章被限定条件淹没。',
+    suggestion: '有证据依据的 hedging 是正确学术表达（ICMJE），不要全部删除；重点清理同一条 claim 上的多层限定（见 hedge-stacking）和无需限定的常识结论。Discussion 中可保留正常 hedging；Abstract/Conclusion 应逐句复核。',
+    languages: ['en'],
+    evidence: { type: 'heuristic' },
+    note: '密度规则：单次 hedge 不报警；这是"防御饱和"的整体行为检测，不是反 hedge 工具。',
+  },
+  {
+    id: 'hedge-density-zh',
+    category: 'claim_calibration',
+    severity: 'medium',
+    confidence: 'low',
+    label: '防御性限定词密度过高（中文）',
+    pattern: /(可能|或许|也许|不一定|不能排除|尚需进一步|有待进一步|需谨慎解读|并不意味着|并不代表|并非一定)/g,
+    threshold: { minCount: 5, perK: 300, unit: 'sentence' },
+    message: '防御性限定词（可能/或许/也许/不一定…）密度过高（≥5 次且 ≥300/千句）：每个结论都附带 caveat，自我限制淹没内容。',
+    suggestion: '同一边界只写一次；有依据的限定保留，重复的自我免责删除。',
+    languages: ['zh'],
+    evidence: { type: 'heuristic' },
+    note: '与"并非要证明"等防御性声明不同，本规则检测的是整体限定密度。',
+  },
+  {
+    id: 'hedge-stacking',
+    category: 'claim_calibration',
+    severity: 'medium',
+    confidence: 'medium',
+    label: '限定词堆叠（一条 claim 套多层保险）',
+    // 不含 well："may well be" 是正常表达；只报 hedge+hedge 真堆叠
+    pattern: /\b(may|might|could|can)\s+(possibly|potentially|perhaps)\s+(suggest|indicate|imply|reflect|represent|be|lead|result)\b|(或许|也许|可能){2}/gi,
+    message: '检测到限定词堆叠（"may potentially suggest"、"could possibly indicate"、中文"或许可能"）：一条 claim 套了两三层保险，是典型的防御饱和写法。',
+    suggestion: '保留一层最准确的限定，其余删除："may suggest" 就够，不需要 "may potentially suggest"。',
+    maxHits: 3,
+    languages: ['zh', 'en'],
+    evidence: { type: 'heuristic' },
+  },
+  {
+    id: 'overlong-sentence-en',
+    category: 'academic_style',
+    severity: 'medium',
+    confidence: 'high',
+    label: '超长句 + 从句堆叠（英文）',
+    // v0.6：counter 实现——句子 >35 词且从句标记 ≥3
+    pattern: /\b(which|that|while|whereas|although|because|thereby|leading to|resulting in)\b/gi,
+    threshold: { minCount: 2, perK: 0 },
+    counter: (text: string): number => {
+      let n = 0
+      for (const s of splitSentences(text)) {
+        const words = countLexicalUnits(s).englishWords
+        const markers = (s.match(/\b(which|that|while|whereas|although|because|thereby|leading to|resulting in)\b/gi) ?? []).length
+        if (words > 35 && markers >= 3) n += 1
+      }
+      return n
+    },
+    message: '存在 ≥2 个超长堆叠句（>35 词且 ≥3 个从句标记 which/that/while/because…）：一句话承载了过多独立论点。',
+    suggestion: '把长句拆成 2–3 个短句；每个句子只承担一个论点。',
+    languages: ['en'],
+    evidence: { type: 'heuristic' },
+    note: '学术英文长句常见，但">35 词 + ≥3 从句标记"同时满足才报，正常表述不受影响。',
+  },
+  {
+    id: 'overlong-sentence-zh',
+    category: 'academic_style',
+    severity: 'medium',
+    confidence: 'high',
+    label: '超长句 + 连接词堆叠（中文）',
+    pattern: /(其中|同时|进一步|从而|进而|因此|并且|尤其|这意味着)/g,
+    threshold: { minCount: 2, perK: 0 },
+    counter: (text: string): number => {
+      let n = 0
+      for (const s of splitSentences(text)) {
+        const chars = countLexicalUnits(s).cjkChars
+        const commas = (s.match(/[，；,;]/g) ?? []).length
+        const conns = (s.match(/(其中|同时|进一步|从而|进而|因此|并且|尤其|这意味着)/g) ?? []).length
+        if (chars > 80 && commas >= 5 && conns >= 3) n += 1
+      }
+      return n
+    },
+    message: '存在 ≥2 个超长句（>80 字且 ≥5 个逗号/分号且 ≥3 个逻辑连接词）：一句话塞进多个独立论点。',
+    suggestion: '按连接词位置拆句，每句只讲一个论点；"其中/同时/进一步"驱动的长链改为短句。',
+    languages: ['zh'],
+    evidence: { type: 'heuristic' },
+  },
+  {
+    id: 'connective-overuse',
+    category: 'llm_associated',
+    severity: 'low',
+    confidence: 'low',
+    label: '连续句首连接词',
+    // v0.6：counter 实现——同一段内连续 ≥3 句以连接词开头
+    pattern: /\b(Moreover|Furthermore|Additionally|In addition|However|Therefore|Thus|Consequently|Meanwhile)\b/gi,
+    threshold: { minCount: 1, perK: 0 },
+    counter: (text: string): number => {
+      let n = 0
+      for (const para of text.split(/\n{2,}/)) {
+        const sents = splitSentences(para).filter((s) => s.length > 0)
+        let run = 0
+        for (const s of sents) {
+          if (/^(Moreover|Furthermore|Additionally|In addition|However|Therefore|Thus|Consequently|Meanwhile)[,\s]/i.test(s)) {
+            run += 1
+            if (run >= 3) { n += 1; break }
+          } else {
+            run = 0
+          }
+        }
+      }
+      return n
+    },
+    message: '检测到同一段内连续 ≥3 句以连接词开头（Moreover/Furthermore/Additionally…），机械推进感强。',
+    suggestion: '删掉大部分句首连接词，用内容本身的逻辑推进；保留少量用于真实转折。',
+    languages: ['en'],
+    evidence: { type: 'literature', source: 'Kobak et al. 2025' },
+  },
+  {
+    id: 'claim-evidence-proximity',
+    category: 'claim_calibration',
+    severity: 'medium',
+    confidence: 'low',
+    label: '强主张附近缺少证据锚点',
+    pattern: /\b(prove[sd]?|proven|established?|confirmed?|guarantee[sd]?|definitively|unequivocally|unambiguously|conclusively|we prove|we establish)\b/gi,
+    // v0.6：附近 ±120 字符无证据锚点（数字/%/p 值/CI/图表引用/citation）才提示
+    context: {
+      window: 120,
+      exclude: /\b\d+(?:\.\d+)?\s*%?|p\s*[<≤=]\s*0?\.?\d|\bCI\b|confidence interval|95%|Table\s*\d|Figure\s*\d|\\cite|\[\d+\]/i,
+    },
+    message: '检测到强主张动词（prove/establish/confirm/guarantee…），但附近 ±120 字符没有证据锚点（数字/百分数/p 值/置信区间/图表引用）。',
+    suggestion: '不是说主张错误：请在强主张附近补充具体证据（数字、统计量或引用）；若确无证据支撑，弱化为证据导向表述。',
+    maxHits: 3,
+    languages: ['en'],
+    evidence: { type: 'heuristic' },
+    note: '仅提示复核：附近有数据/统计量/图表引用时不报警。',
+  },
+  {
+    id: 'format-unicode-math',
+    category: 'formatting',
+    severity: 'low',
+    confidence: 'low',
+    label: 'Unicode 数学符号（建议改用 LaTeX 数学模式）',
+    // v0.6：Unicode 下标/上标/希腊字母/数学符号在正文中（LaTeX 工作流常见"露馅"）
+    pattern: /[\u2080-\u209c\u00b9\u00b2\u00b3\u2070-\u2079\u00b5\u00d7\u2212\u03b1-\u03c9\u0391-\u03a9]/g,
+    message: '检测到 Unicode 下标/上标/希腊字母/数学符号（₁₂₃ ²³ α β × −…）。在 LaTeX 工作流中，这类字符往往是润色/转换时留下的格式杂质。',
+    suggestion: '若是 LaTeX 文档，请改用数学模式（$x_{1}$、$\alpha$）；若已确定保留 Unicode（如生物学术语 α diversity），可忽略。',
+    maxHits: 4,
+    languages: ['zh', 'en'],
+    evidence: { type: 'heuristic' },
+    note: '低危提示：α diversity 等正当术语不受影响，人工确认即可。',
+  },
+  {
+    id: 'restatement-loop',
+    category: 'rhetorical_pattern',
+    severity: 'low',
+    confidence: 'low',
+    label: '重复绕圈（同段句子高相似且无新增证据）',
+    pattern: /(.)/,
+    // v0.6：restatementLoop 专用——段内句子两两 cosine ≥ 0.72 且后句无新增证据
+    restatementLoop: true,
+    message: '本段相邻句子具有较高词汇重合（相似度 ≥0.72），且后句未引入新的数据、引用或实体。',
+    suggestion: '检查是否在重复解释同一观点：删掉重复圈，只保留信息量最大的那一句；必要时合并为一句。',
+    maxHits: 3,
+    languages: ['zh', 'en'],
+    evidence: { type: 'heuristic' },
+    note: '词汇相似不是语义相同的证据——本规则只提示"可能"绕圈，人工复核后决定。',
+  },
 ]
 
 // ---------------------------------------------------------------------------
@@ -931,6 +1311,49 @@ export interface AuditOptions {
   projectResidueTerms?: string[]
   /** v0.4：true 时先预处理再审计（剥离 references/code/math/URL），默认 true */
   preprocess?: boolean
+  /** v0.6 Scholarship Lock：修改前文本；提供时对比数字/引用/图表编号等科研实体的变化（HIGH） */
+  original?: string
+  /** v0.6 Author Style Profile：作者历史风格档案（writing_style_profile 生成）；提供时检测句长分布漂移 */
+  styleProfile?: StyleProfile
+}
+
+export interface RestatementLoop {
+  paraIndex: number
+  sim: number
+  sentences: [string, string]
+}
+
+/**
+ * v0.6 重复绕圈检测：段内句子两两 cosine 相似 ≥0.72，且后句未引入新的
+ * 证据实体（数字/引用/图表编号/大写实体）→ 疑似同一观点换说法重复解释。
+ * 每段最多报 1 对。纯 token 统计，零 LLM。
+ */
+export function findRestatementLoops(text: string, max: number): RestatementLoop[] {
+  const out: RestatementLoop[] = []
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+  for (let pi = 0; pi < paragraphs.length && out.length < max; pi++) {
+    const sents = splitSentences(paragraphs[pi]).slice(0, 12)
+    if (sents.length < 3) continue
+    const toks = sents.map(tokenizeForSimilarity)
+    const evs = sents.map(evidenceTokens)
+    let reported = false
+    for (let i = 0; i < sents.length - 1 && !reported; i++) {
+      for (let j = i + 1; j < sents.length && !reported; j++) {
+        const sim = cosineSimilarity(toks[i], toks[j])
+        if (sim >= 0.72) {
+          const newEvidence = [...evs[j]].filter((e) => !evs[i].has(e))
+          if (newEvidence.length === 0) {
+            out.push({ paraIndex: pi, sim, sentences: [sents[i], sents[j]] })
+            reported = true
+          }
+        }
+      }
+    }
+  }
+  return out
 }
 
 export function auditText(text: string, opts?: AuditOptions): AuditReport {
@@ -1009,6 +1432,28 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
           suggestion: rule.suggestion,
           note: rule.note,
           evidence: rule.evidence,
+        })
+      }
+      continue
+    }
+
+    // v0.6 restatement-loop 规则：段内句子相似度（不依赖固定词表）
+    if (rule.restatementLoop) {
+      const loops = findRestatementLoops(scanText, rule.maxHits ?? 3)
+      for (const l of loops) {
+        hits.push({
+          ruleId: rule.id,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: rule.confidence,
+          label: rule.label,
+          paragraphIndex: l.paraIndex,
+          snippet: `（相似度 ${(l.sim * 100).toFixed(0)}%）句 A：${l.sentences[0].slice(0, 90)} … 句 B：${l.sentences[1].slice(0, 90)}`,
+          message: rule.message,
+          suggestion: rule.suggestion,
+          note: rule.note,
+          evidence: rule.evidence,
+          matchText: l.sentences[0].slice(0, 40),
         })
       }
       continue
@@ -1124,6 +1569,69 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     }
   }
 
+  // v0.6 Scholarship Lock：对比修改前后的科研实体（数字/引用/图表编号/DOI）。
+  // 注意用原始文本（view.raw）——prose 已剥离 \cite 等 LaTeX 命令，无法对比引用。
+  if (opts?.original !== undefined && opts.original.trim()) {
+    const diff = diffScholarship(opts.original, view.raw)
+    const lockTypes = new Set<ScholarshipType>(['cite', 'ref', 'figure', 'table', 'percent', 'pvalue', 'ci'])
+    for (const c of diff.changed) {
+      hits.push({
+        ruleId: 'scholarship-lock',
+        category: 'claim_calibration',
+        severity: 'high',
+        confidence: 'high',
+        label: `科研实体被修改（${SCHOLARSHIP_TYPE_LABEL[c.type]}）`,
+        paragraphIndex: -1,
+        snippet: `${c.before} → ${c.after}`,
+        message: '润色操作改变了科研事实（数字/统计量/数值与修改前不一致）。如果这是有意的科学内容修改，请显式确认；如果只是语言润色，请恢复原值。',
+        suggestion: `恢复原值（${c.before}），或在回复中显式说明这是有意的科学修改（而非语言润色）。`,
+        evidence: { type: 'heuristic' },
+        matchText: `scholarship:${c.type}:${c.before}->${c.after}`,
+      })
+    }
+    for (const r of diff.removed) {
+      if (!lockTypes.has(r.type)) continue
+      hits.push({
+        ruleId: 'scholarship-lock',
+        category: 'claim_calibration',
+        severity: 'high',
+        confidence: 'high',
+        label: `科研实体消失（${SCHOLARSHIP_TYPE_LABEL[r.type]}）`,
+        paragraphIndex: -1,
+        snippet: r.value,
+        message: `修改后丢失了 ${SCHOLARSHIP_TYPE_LABEL[r.type]}：${r.value}。引用/图表编号不应在润色中被删除。`,
+        suggestion: '恢复被删除的引用/编号；如确为有意删除，请显式确认。',
+        evidence: { type: 'heuristic' },
+        matchText: `scholarship-removed:${r.type}:${r.value}`,
+      })
+    }
+  }
+
+  // v0.6 Author Style Profile：句长分布漂移检测（偏离作者历史写作分布）
+  if (opts?.styleProfile) {
+    const lens = splitSentences(scanText).map((s) => countWords(s))
+    if (lens.length >= 5) {
+      const med = medianOf(lens)
+      const sp = opts.styleProfile
+      const threshold = Math.max(sp.sentenceLengthMedian * 0.5, sp.sentenceLengthStd * 2, 8)
+      const dev = Math.abs(med - sp.sentenceLengthMedian)
+      if (dev > threshold) {
+        hits.push({
+          ruleId: 'style-profile-drift',
+          category: 'academic_style',
+          severity: 'low',
+          confidence: 'low',
+          label: '句长分布偏离作者历史风格',
+          paragraphIndex: -1,
+          snippet: `（风格档案对比）当前句长中位数 ${med} 词 vs 作者历史 ${sp.sentenceLengthMedian} 词（偏差 ${dev.toFixed(1)} > 阈值 ${threshold.toFixed(1)}）`,
+          message: '当前文本的句长分布明显偏离作者历史写作风格（中位数句长偏差超过阈值）。',
+          suggestion: '把超长句拆短（或把碎片句合并），向作者历史分布靠拢；如本文有意采用不同风格（如综述），可忽略。',
+          evidence: { type: 'project-specific' },
+        })
+      }
+    }
+  }
+
   const byCategory = {
     process_residue: 0,
     claim_calibration: 0,
@@ -1228,12 +1736,22 @@ export function rulesBrief(): string {
     '- 破折号按密度：全文 ≥5 次且 ≥0.5/千词时删除大部分（范围连字符 30–75 °C 不算）',
     '- 冒号标题必须前后并列或递进',
     '',
-    '## 六、发布会原则（扬长避短）',
+    '## 六、v0.6 学术质量守卫（Scholarship Lock / 防御饱和 / 句式）',
+    '- Scholarship Lock：润色/改写/去 AI 味时严禁改动数字、百分数、p 值、置信区间、单位、\\cite/\\ref、Figure/Table 编号、DOI；改前先调用 writing_audit(original=原文) 对比',
+    '- 防御饱和：may/might/could/possibly/potentially 密度 ≥5 次且 ≥300/千句时清理；一条 claim 套多层保险（may potentially suggest）必须拆到只剩一层；有证据依据的 hedging 保留（ICMJE）',
+    '- 超长句堆叠：英文 >35 词且 ≥3 从句标记、中文 >80 字且 ≥5 逗号且 ≥3 连接词——拆句',
+    '- 重复绕圈：同段句子高词汇重合且无新增证据时删掉重复圈',
+    '- 强主张（prove/establish/confirm/guarantee）附近必须有证据锚点（数字/统计量/图表引用），否则弱化',
+    '- 作者风格：用 writing_style_profile 学习作者历史论文，新稿件句长分布偏离时向作者靠拢',
+    '- LaTeX 中 Unicode 下标/希腊字母（₁ α）改用数学模式',
+    '',
+    '## 七、发布会原则（扬长避短）',
     '- 只围绕优势组织论文；不写工作汇报、不主动示弱、不替审稿人攻击自己',
     '- 打不过的维度不设为比赛项目；不占优的结果从目标/约束/场景解释',
     '- 优势必须明确说出来；结论只强化记忆点',
     '',
     '## 七、提交前自查',
     '- 用 writing_audit 工具对全文扫描（可指定 profile: manuscript/rebuttal/cover_letter）；高危项必须清零，中危项 ≤3 处，低危项可保留但应说明理由',
+    '- 润色/改写后：用 writing_audit(original=改前原文) 确认 Scholarship Lock 无 HIGH（科研事实未被改动）',
   ].join('\n')
 }

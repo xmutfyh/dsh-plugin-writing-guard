@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "0.5.2",
-  "description": "DSH plugin: deterministic academic-writing linter — incremental lint (fingerprint diff: only new/resolved issues injected), segment-pipeline preprocessing with section detection, document-profile-aware scanning, language-aware density thresholds with confidence/evidence; writing_audit + writing_rules tools with auto-audit on paper file writes",
+  "version": "0.6.0",
+  "description": "DSH plugin: deterministic academic-writing quality guard — Scholarship Lock (protects numbers/citations during polishing), defensive-saturation density, overlong sentence & clause stacking, restatement-loop, author style profile, incremental lint, segment-pipeline preprocessing, document-profile-aware scanning with confidence/evidence; writing_audit + writing_rules + writing_style_profile tools",
   "type": "module",
   "main": "lib/index.js",
   "files": [
