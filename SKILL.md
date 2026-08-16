@@ -114,6 +114,11 @@ description: >-
   状态词消失或被替换 → 核验："participants reported improvement" 不能变成 "participants
   improved"（报告≠事实）；"observed rate" → "estimated rate" 是状态替换（观测≠模拟/估算），
   同样改变读者对证据来源的理解——不自动判错，恢复状态词或显式说明状态改变。
+- **claim-bound 守恒（v1.1）**：否定/零结果/scope/证据状态**绑定到所属子句**逐句配对比较——
+  "X did not improve, but Y improved" → "X improved, but Y did not improve" 这种标记交换
+  （句子级数量完全相同）必须检出；marker 大小写/英美拼写（modelled↔modeled）不视为变化；
+  scope 边界新增（一般陈述→受限陈述）提示可能缩窄外部有效性；同一主张的因果力/证据力/
+  hedge 多轴变化在同一条事件中全部保留。
 - **命中性质（findingKind）**：
   - `INVARIANT`（🔴 科学不变量被改动：数字/引用/主张强度/否定/scope）——立即处理；
   - `VIOLATION`（明确违规：修改过程残留、自黑免责）——应当修正；

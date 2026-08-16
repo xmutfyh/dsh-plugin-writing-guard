@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.0.0'
+export const PLUGIN_VERSION = '1.1.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -411,10 +411,9 @@ export function splitClauses(sentence: string): string[] {
     .filter((c) => c.length > 0)
 }
 
-/** v0.9/v0.9.3 ClaimSpan：一个子句内的一束主张标记。
- *  v0.9.3（0.9.2 评审 P0/P1）：
- *  - hedged 独立字段（modality 不再与证据动词竞争 integer——may suggest ≠ suggest）；
- *  - 否定/零结果/scope 从句子级 boolean 升级为子句级 marker multiset（Scholarship Lock 同款思想）。 */
+/** v0.9/v0.9.3/v1.1 ClaimSpan：一个子句内的一束主张标记。
+ *  v1.1（1.0 评审）：marker 绑定到子句（claim-bound markers）——"X did not improve, but Y
+ *  improved" → "X improved, but Y did not improve" 的标记交换，句子级 multiset 看不出来。 */
 export interface ClaimSpan {
   clause: string
   /** 因果力（-1 无；0 不确定 … 5 因果） */
@@ -426,10 +425,11 @@ export interface ClaimSpan {
   hedgeMarkers: string[]
   causalMarkers: string[]
   evidentialMarkers: string[]
-  /** v0.9.3：子句级否定/零结果/scope 标记 multiset */
+  /** 子句级否定/零结果/scope/证据状态标记（v1.1：claim-bound conservation 的数据源） */
   negationMarkers: string[]
   nullMarkers: string[]
   scopeMarkers: string[]
+  evidenceStatusMarkers: string[]
 }
 
 /** 关联句中的描述性分词不升级因果力："was associated with reduced mortality" 是关联主张，
@@ -442,7 +442,12 @@ const ASSOC_DESCRIPTOR_RE = /associated with(?: (?:a|an|the) )?(?: [\w-]+){0,3} 
 function evidentialRoleFor(marker: string, clause: string, index: number): 'epistemic' | 'descriptive' | 'procedural' {
   const win = clause.slice(Math.max(0, index - 30), Math.min(clause.length, index + marker.length + 30))
   if (/^(shows?|showed|shown)$/i.test(marker)) {
-    // "Figure 4 shows the model architecture" / "as shown in Figure 4" —— 展示性描述
+    // v1.1：优先判断 that-complement——"Figure 4 shows that X increases survival" 的 shows that
+    // 承担 epistemic claim（即使主语是 Figure）；只有 "Figure shows architecture/workflow/
+    // schematic/example" 这类展示性宾语才是 descriptive。
+    if (/\b(?:shows?|showed)\s+(?:that|evidence that|a (?:significant|clear|strong|positive)|an? (?:increase|decrease|reduction|association|effect|improvement|decline|change))\b/i.test(clause)) {
+      return 'epistemic'
+    }
     return /\b(?:figures?|tables?|panels?|images?|diagrams?|examples?|insets?)\b/i.test(win) ? 'descriptive' : 'epistemic'
   }
   if (/^(establishes?|established|establishing)$/i.test(marker)) {
@@ -454,7 +459,10 @@ function evidentialRoleFor(marker: string, clause: string, index: number): 'epis
     return /\b(?:receipt|configuration|identity|setup|presence)\b/i.test(win) ? 'procedural' : 'epistemic'
   }
   if (/^(demonstrates?|demonstrated|demonstrating)$/i.test(marker)) {
-    // "the model/framework/system demonstrates capability" —— 能力展示；"results demonstrate" 才是 epistemic
+    // v1.1：demonstrates that 优先算 epistemic；"the model demonstrates capability" 才是 descriptive
+    if (/\b(?:demonstrates?|demonstrated)\s+(?:that|evidence that|a (?:significant|clear|strong)|an? (?:increase|decrease|reduction|association|effect|improvement|decline))\b/i.test(clause)) {
+      return 'epistemic'
+    }
     return /\b(?:model|framework|system|method|approach|implementation|experiment|algorithm|pipeline)\b.{0,20}(?:demonstrates?|demonstrated)\b/i.test(win) ? 'descriptive' : 'epistemic'
   }
   return 'epistemic'
@@ -501,9 +509,10 @@ export function extractClaimSpans(sentence: string): ClaimSpan[] {
     const negationMarkers = clause.match(NEGATION_RE) ?? []
     const nullMarkers = clause.match(NULL_RESULT_RE) ?? []
     const scopeMarkers = clause.match(SCOPE_RE) ?? []
+    const evidenceStatusMarkers = clause.match(EVIDENCE_STATUS_RE) ?? []
     spans.push({
       clause, causalLevel, evidentialLevel, hedged, hedgeMarkers,
-      causalMarkers, evidentialMarkers, negationMarkers, nullMarkers, scopeMarkers,
+      causalMarkers, evidentialMarkers, negationMarkers, nullMarkers, scopeMarkers, evidenceStatusMarkers,
     })
   }
   return spans
@@ -573,13 +582,15 @@ export interface ClaimDrift {
   levelAfter: number
   beforeWord: string
   afterWord: string
-  /** 漂移轴（causal 因果力 / evidential 证据力） */
+  /** 主漂移轴（causal 因果力 / evidential 证据力） */
   axis: 'causal' | 'evidential'
   /** 句对齐相似度（决定 confidence/severity 分档） */
   sim: number
-  /** v0.9.3：hedge 状态变化（may suggest → suggest：level 相同但 hedged true→false） */
+  /** hedge 状态变化（may suggest → suggest：level 相同但 hedged true→false） */
   hedgedBefore?: boolean
   hedgedAfter?: boolean
+  /** v1.1：多轴 delta（"causal 1→5, evidential 1→5, hedge 有→无" 单事件全保留，不静默丢轴） */
+  deltas?: string[]
 }
 
 export interface EpistemicDrift {
@@ -591,44 +602,69 @@ export interface EpistemicDrift {
   negationAdded: Array<{ before: string; after: string; marker: string; sim: number }>
   /** 零结果表述被删除 */
   nullResultRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
-  /** scope 边界消失（主张可能被泛化）——句子级 multiset */
+  /** scope 边界消失（主张可能被泛化）——claim-bound */
   scopeRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
-  /** v1.0 证据状态漂移（reported/observed/measured…消失或被替换） */
+  /** v1.1：scope 边界新增（主张可能被缩窄——"The treatment improves survival" → "In this cohort, …"） */
+  scopeAdded: Array<{ before: string; after: string; marker: string; sim: number }>
+  /** v1.0 证据状态漂移（reported/observed/measured…消失或被替换）——claim-bound */
   evidenceStatusRemoved: Array<{ before: string; after: string; marker: string; sim: number }>
   evidenceStatusAdded: Array<{ before: string; after: string; marker: string; sim: number }>
 }
 
-/** v0.9.3：marker multiset diff（Scholarship Lock 的 diffValueLists 思想——次数守恒，不是 boolean） */
+/** v1.1：marker canonicalization——diff 用规范形做 key，避免大小写（Observed→observed）与
+ *  英美拼写（modelled→modeled）被误判为两个不同 marker */
+const MARKER_CANON: Record<string, string> = {
+  modeled: 'modelled',
+  'self reported': 'self-reported',
+  'self report': 'self-reported',
+  'self reports': 'self-reported',
+}
+
+function canonicalMarker(m: string): string {
+  const l = m.trim().toLowerCase()
+  return MARKER_CANON[l] ?? l
+}
+
+/** v0.9.3：marker multiset diff（Scholarship Lock 的 diffValueLists 思想——次数守恒，不是 boolean）。
+ *  v1.1：key 用 canonicalMarker（大小写/拼写归一），返回规范形。 */
 function diffMarkerLists(before: string[], after: string[]): { removed: string[]; added: string[] } {
   const bCounts = new Map<string, number>()
   const aCounts = new Map<string, number>()
-  for (const v of before) bCounts.set(v, (bCounts.get(v) ?? 0) + 1)
-  for (const v of after) aCounts.set(v, (aCounts.get(v) ?? 0) + 1)
-  const removed: string[] = []
-  const added: string[] = []
   for (const v of before) {
-    const b = bCounts.get(v) ?? 0
-    const a = aCounts.get(v) ?? 0
-    if (b > a) { bCounts.set(v, b - 1); removed.push(v) }
+    const k = canonicalMarker(v)
+    bCounts.set(k, (bCounts.get(k) ?? 0) + 1)
   }
   for (const v of after) {
-    const a = aCounts.get(v) ?? 0
-    const b = bCounts.get(v) ?? 0
-    if (a > b) { aCounts.set(v, a - 1); added.push(v) }
+    const k = canonicalMarker(v)
+    aCounts.set(k, (aCounts.get(k) ?? 0) + 1)
+  }
+  const removed: string[] = []
+  const added: string[] = []
+  for (const [k, count] of bCounts) {
+    const a = aCounts.get(k) ?? 0
+    for (let i = 0; i < Math.max(0, count - a); i++) removed.push(k)
+  }
+  for (const [k, count] of aCounts) {
+    const b = bCounts.get(k) ?? 0
+    for (let i = 0; i < Math.max(0, count - b); i++) added.push(k)
   }
   return { removed, added }
 }
 
-/** v0.9.3：句子级 marker multiset（negation/null/scope 守恒用——句子级 multiset 既防
- *  多主张句漏报（"Z did not improve" 不被 "X was not associated" 的布尔掩盖），
- *  也避免 marker 落在未配对子句时被 clause 配对漏掉） */
-function extractMarkerLists(sentence: string): { negationMarkers: string[]; nullMarkers: string[]; scopeMarkers: string[]; evidenceStatusMarkers: string[] } {
-  return {
-    negationMarkers: sentence.match(NEGATION_RE) ?? [],
-    nullMarkers: sentence.match(NULL_RESULT_RE) ?? [],
-    scopeMarkers: sentence.match(SCOPE_RE) ?? [],
-    evidenceStatusMarkers: sentence.match(EVIDENCE_STATUS_RE) ?? [],
+/** v1.1：子句主语候选（配对奖励用）——"X did not improve" 应配 "X improved"（同一实体），
+ *  而不是相似度更高的 "Y did not improve"（主语不同，claim 不同） */
+const CLAUSE_SUBJECT_STOP = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'our', 'their', 'its', 'his', 'her',
+  'in', 'on', 'at', 'of', 'for', 'with', 'by', 'from', 'as', 'to', 'into', 'over', 'under',
+  'while', 'whereas', 'although', 'but', 'and', 'however', 'moreover', 'furthermore', 'thus',
+])
+
+function clauseSubject(clause: string): string {
+  const toks = clause.toLowerCase().match(/[a-z][a-z'-]*/g) ?? []
+  for (const t of toks) {
+    if (!CLAUSE_SUBJECT_STOP.has(t)) return t
   }
+  return toks[0] ?? ''
 }
 
 /**
@@ -645,7 +681,7 @@ function extractMarkerLists(sentence: string): { negationMarkers: string[]; null
  */
 export function diffEpistemic(before: string, after: string): EpistemicDrift {
   const out: EpistemicDrift = {
-    claimDrift: [], negationRemoved: [], negationAdded: [], nullResultRemoved: [], scopeRemoved: [],
+    claimDrift: [], negationRemoved: [], negationAdded: [], nullResultRemoved: [], scopeRemoved: [], scopeAdded: [],
     evidenceStatusRemoved: [], evidenceStatusAdded: [],
   }
   const bs = splitSentences(before)
@@ -657,84 +693,148 @@ export function diffEpistemic(before: string, after: string): EpistemicDrift {
     const bSpans = extractClaimSpans(b)
     const aSpans = extractClaimSpans(a)
     const aUsed = new Set<number>()
+    // after 全句 marker 合并（未配对 before 子句的兜底比较对象）
+    const aAll = { negation: [] as string[], null: [] as string[], scope: [] as string[], evidenceStatus: [] as string[] }
+    for (const s of aSpans) {
+      aAll.negation.push(...s.negationMarkers)
+      aAll.null.push(...s.nullMarkers)
+      aAll.scope.push(...s.scopeMarkers)
+      aAll.evidenceStatus.push(...s.evidenceStatusMarkers)
+    }
+    const bAll = { negation: [] as string[], null: [] as string[], scope: [] as string[], evidenceStatus: [] as string[] }
+    for (const s of bSpans) {
+      bAll.negation.push(...s.negationMarkers)
+      bAll.null.push(...s.nullMarkers)
+      bAll.scope.push(...s.scopeMarkers)
+      bAll.evidenceStatus.push(...s.evidenceStatusMarkers)
+    }
 
-    // 1) v0.9.3 子句级多主张漂移（best-match-first：窗口内选最高相似度，≥0.3 才配对）
+    // v1.1：claim-bound 对比——每对 before/after 子句比较绑定在该主张上的 markers；
+    // 未配对的 before 子句对其 markers 与 after 全句比较（兜底，防 marker 落在未配对子句漏报）。
+    // mode：'both' 配对双向；'removed-only' 未配对 before 只报消失；'added-only' 未配对 after 只报新增
+    const reportClauseMarkers = (
+      bSpan: ClaimSpan,
+      aMarkers: { negation: string[]; null: string[]; scope: string[]; evidenceStatus: string[] },
+      labelB: string,
+      labelA: string,
+      mode: 'both' | 'removed-only' | 'added-only' = 'both',
+    ): void => {
+      const neg = diffMarkerLists(bSpan.negationMarkers, aMarkers.negation)
+      if (mode !== 'added-only') for (const marker of neg.removed) out.negationRemoved.push({ before: labelB, after: labelA, marker, sim })
+      if (mode !== 'removed-only') for (const marker of neg.added) out.negationAdded.push({ before: labelB, after: labelA, marker, sim })
+      const nul = diffMarkerLists(bSpan.nullMarkers, aMarkers.null)
+      if (mode !== 'added-only') for (const marker of nul.removed) out.nullResultRemoved.push({ before: labelB, after: labelA, marker, sim })
+      if (mode !== 'removed-only') for (const marker of nul.added) out.negationAdded.push({ before: labelB, after: labelA, marker, sim })
+      const scp = diffMarkerLists(bSpan.scopeMarkers, aMarkers.scope)
+      if (mode !== 'added-only') for (const marker of scp.removed) out.scopeRemoved.push({ before: labelB, after: labelA, marker, sim })
+      if (mode !== 'removed-only') for (const marker of scp.added) out.scopeAdded.push({ before: labelB, after: labelA, marker, sim })
+      const es = diffMarkerLists(bSpan.evidenceStatusMarkers, aMarkers.evidenceStatus)
+      if (mode !== 'added-only') for (const marker of es.removed) out.evidenceStatusRemoved.push({ before: labelB, after: labelA, marker, sim })
+      if (mode !== 'removed-only') for (const marker of es.added) out.evidenceStatusAdded.push({ before: labelB, after: labelA, marker, sim })
+    }
+
+    // 1) 子句级多主张漂移（best-match-first：窗口内选最高相似度，≥0.3 才配对；
+    //    v1.1 加主语一致性奖励（+0.3）——同一实体的主张优先配对，防相似度更高的异主语子句抢配）
     for (let i = 0; i < bSpans.length; i++) {
       let bestJ = -1
       let bestSim = 0.3
+      const bSubj = clauseSubject(bSpans[i].clause)
       for (let j = Math.max(0, i - 1); j < Math.min(aSpans.length, i + 2); j++) {
         if (aUsed.has(j)) continue
         const simJ = cosineSimilarity(tokenizeForSimilarity(bSpans[i].clause), tokenizeForSimilarity(aSpans[j].clause))
-        if (simJ > bestSim) {
-          bestSim = simJ
+        const scored = simJ + (bSubj === clauseSubject(aSpans[j].clause) ? 0.3 : 0)
+        if (scored > bestSim) {
+          bestSim = scored
           bestJ = j
         }
       }
-      if (bestJ < 0) continue
-      aUsed.add(bestJ)
       const bSpan = bSpans[i]
+      if (bestJ < 0) {
+        // 未配对 before 子句：只报其 markers 的消失（新增由 after 侧兜底统一报，避免重复）
+        reportClauseMarkers(bSpan, aAll, bSpan.clause.slice(0, 120), '(未配对)', 'removed-only')
+        continue
+      }
+      aUsed.add(bestJ)
       const aSpan = aSpans[bestJ]
 
-      // 因果轴漂移（v0.9.3：不 continue——marker 守恒检查独立于 claim drift）
+      // v1.1：单 hit 多轴 delta（causal + evidential + hedge 全部保留，不静默丢轴）
       const causalDrifted = (bSpan.causalLevel >= 0 || aSpan.causalLevel >= 0) && aSpan.causalLevel !== bSpan.causalLevel
-      if (causalDrifted) {
-        const beforeWord = bSpan.causalMarkers.length > 0 ? bSpan.causalMarkers[bSpan.causalMarkers.length - 1] : '(无)'
-        const afterWord = aSpan.causalMarkers.length > 0 ? aSpan.causalMarkers[aSpan.causalMarkers.length - 1] : '(无)'
-        out.claimDrift.push({
-          before: bSpan.clause.slice(0, 120), after: aSpan.clause.slice(0, 120),
-          levelBefore: Math.max(bSpan.causalLevel, 0), levelAfter: Math.max(aSpan.causalLevel, 0),
-          beforeWord, afterWord, axis: 'causal', sim,
-        })
-      }
-      // 证据轴：动词层变化 或 hedge 状态变化（v0.9.3：may suggest → suggest 可检出）
+      const evidentialDrifted = bSpan.evidentialLevel !== aSpan.evidentialLevel
       const hedgedChanged = bSpan.hedged !== aSpan.hedged
-      if (!causalDrifted && (bSpan.evidentialLevel !== aSpan.evidentialLevel || hedgedChanged)) {
-        const beforeWord = hedgedChanged && bSpan.hedged
-          ? (bSpan.hedgeMarkers[0] ?? '(hedge)')
-          : (bSpan.evidentialMarkers.length > 0 ? bSpan.evidentialMarkers[bSpan.evidentialMarkers.length - 1] : '(无)')
-        const afterWord = hedgedChanged && !bSpan.hedged
-          ? (aSpan.hedgeMarkers[0] ?? '(hedge)')
-          : (aSpan.evidentialMarkers.length > 0 ? aSpan.evidentialMarkers[aSpan.evidentialMarkers.length - 1] : '(无)')
+      if (causalDrifted || evidentialDrifted || hedgedChanged) {
+        const deltas: string[] = []
+        let axis: 'causal' | 'evidential' = 'causal'
+        let levelBefore = 0
+        let levelAfter = 0
+        let beforeWord = '(无)'
+        let afterWord = '(无)'
+        if (causalDrifted) {
+          axis = 'causal'
+          levelBefore = Math.max(bSpan.causalLevel, 0)
+          levelAfter = Math.max(aSpan.causalLevel, 0)
+          beforeWord = bSpan.causalMarkers.length > 0 ? bSpan.causalMarkers[bSpan.causalMarkers.length - 1] : '(无)'
+          afterWord = aSpan.causalMarkers.length > 0 ? aSpan.causalMarkers[aSpan.causalMarkers.length - 1] : '(无)'
+          deltas.push(`因果力 ${levelBefore}→${levelAfter}`)
+        }
+        if (evidentialDrifted) {
+          if (!causalDrifted) {
+            axis = 'evidential'
+            levelBefore = bSpan.evidentialLevel
+            levelAfter = aSpan.evidentialLevel
+            beforeWord = bSpan.evidentialMarkers.length > 0 ? bSpan.evidentialMarkers[bSpan.evidentialMarkers.length - 1] : '(无)'
+            afterWord = aSpan.evidentialMarkers.length > 0 ? aSpan.evidentialMarkers[aSpan.evidentialMarkers.length - 1] : '(无)'
+          }
+          deltas.push(`证据力 ${bSpan.evidentialLevel}→${aSpan.evidentialLevel}`)
+        }
+        if (hedgedChanged) {
+          deltas.push(`hedge ${bSpan.hedged ? '有' : '无'}→${aSpan.hedged ? '有' : '无'}`)
+          if (!causalDrifted && !evidentialDrifted) {
+            axis = 'evidential'
+            beforeWord = bSpan.hedgeMarkers[0] ?? '(hedge)'
+            afterWord = aSpan.hedgeMarkers[0] ?? '(hedge)'
+          }
+        }
         out.claimDrift.push({
           before: bSpan.clause.slice(0, 120), after: aSpan.clause.slice(0, 120),
-          levelBefore: bSpan.evidentialLevel, levelAfter: aSpan.evidentialLevel,
-          beforeWord, afterWord, axis: 'evidential', sim,
+          levelBefore, levelAfter, beforeWord, afterWord, axis, sim,
           hedgedBefore: bSpan.hedged, hedgedAfter: aSpan.hedged,
+          deltas,
         })
       }
+
+      // 2) claim-bound marker conservation：绑定到配对子句
+      reportClauseMarkers(bSpan, {
+        negation: aSpan.negationMarkers,
+        null: aSpan.nullMarkers,
+        scope: aSpan.scopeMarkers,
+        evidenceStatus: aSpan.evidenceStatusMarkers,
+      }, bSpan.clause.slice(0, 120), aSpan.clause.slice(0, 120))
     }
 
-    // 2) v0.9.3 句子级否定/零结果/scope marker multiset 守恒（Scholarship Lock 同款思想）
-    const bm = extractMarkerLists(b)
-    const am = extractMarkerLists(a)
-    const neg = diffMarkerLists(bm.negationMarkers, am.negationMarkers)
-    for (const marker of neg.removed) {
-      out.negationRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
-    }
-    for (const marker of neg.added) {
-      out.negationAdded.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
-    }
-    const nul = diffMarkerLists(bm.nullMarkers, am.nullMarkers)
-    for (const marker of nul.removed) {
-      out.nullResultRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
-    }
-    for (const marker of nul.added) {
-      out.negationAdded.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
-    }
-    const scp = diffMarkerLists(bm.scopeMarkers, am.scopeMarkers)
-    for (const marker of scp.removed) {
-      out.scopeRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
-    }
-    // v1.0 证据状态守恒："participants reported improvement" → "participants improved" 是把
-    // 报告状态变成直接声称；observed → estimated 是状态替换——都需要作者核验。
-    const es = diffMarkerLists(bm.evidenceStatusMarkers, am.evidenceStatusMarkers)
-    for (const marker of es.removed) {
-      out.evidenceStatusRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
-    }
-    for (const marker of es.added) {
-      out.evidenceStatusAdded.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker, sim })
+    // 3) 未配对 after 子句：其新增 markers 与 before 全句比较（对称兜底——added 方向）
+    for (let j = 0; j < aSpans.length; j++) {
+      if (aUsed.has(j)) continue
+      const aSpan = aSpans[j]
+      reportClauseMarkers(
+        { ...aSpan, clause: aSpan.clause, negationMarkers: bAll.negation, nullMarkers: bAll.null, scopeMarkers: bAll.scope, evidenceStatusMarkers: bAll.evidenceStatus },
+        { negation: aSpan.negationMarkers, null: aSpan.nullMarkers, scope: aSpan.scopeMarkers, evidenceStatus: aSpan.evidenceStatusMarkers },
+        '(未配对)',
+        aSpan.clause.slice(0, 120),
+        'added-only',
+      )
     }
   }
+
+  // v1.1：null/negation 重叠去重——"did not improve" 同时匹配否定与零结果正则，
+  // 同一事件只报更具体的 nullResultRemoved（negation 侧跳过子串重叠）
+  const nullRemovedSet = new Set(out.nullResultRemoved.map((d) => canonicalMarker(d.marker)))
+  out.negationRemoved = out.negationRemoved.filter((d) => {
+    const k = canonicalMarker(d.marker)
+    for (const nk of nullRemovedSet) {
+      if (nk !== k && (nk.includes(k) || k.includes(nk))) return false
+    }
+    return true
+  })
   return out
 }
 
@@ -2212,10 +2312,12 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
   if (opts?.original !== undefined && opts.original.trim()) {
     // v0.9.3 版本差距保护（ESR 实测发现）：全文重写级别差异时行级对比全是噪音——
     // 对齐率 3.7% 时产出 171 条假引用变化与 "60 d → 5.5 mol" 类错配。低于阈值跳过双锁。
+    // v1.1：min 分母 → symmetric coverage F1——before=100 句 after=10 句且 10 句全对齐时，
+    // min 分母会误判 100%；F1 = 2·aligned/(before+after) 正确反映"90% 内容被删"。
     const bSents = splitSentences(opts.original)
     const aSents = splitSentences(view.raw)
     const alignedCount = alignSentences(bSents, aSents).length
-    const alignRate = alignedCount / Math.max(1, Math.min(bSents.length, aSents.length))
+    const alignRate = (2 * alignedCount) / Math.max(1, bSents.length + aSents.length)
     if (alignRate < 0.2) {
       hits.push({
         ruleId: 'version-gap',
@@ -2275,15 +2377,12 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     // v0.9：双轴（因果力/证据力）+ 子句级多主张 + 对齐相似度分档（≥0.70 high / ≥0.55 medium / ≥0.45 low）。
     const ed = diffEpistemic(opts.original, view.raw)
     for (const d of ed.claimDrift) {
-      // v0.9.3：hedge 状态变化（may suggest → suggest：动词层相同但 hedged true→false）也是证据力变化
-      const hedgeOnly = d.hedgedBefore !== undefined && d.hedgedBefore !== d.hedgedAfter
-      const up = hedgeOnly ? d.hedgedAfter === false : d.levelAfter > d.levelBefore
+      // v1.1：单 hit 多轴 delta（causal+evidential+hedge 全保留，不静默丢轴）
+      const up = d.levelAfter > d.levelBefore
       const axis = d.axis === 'causal' ? '因果力' : '证据力'
       const tier = simTier(d.sim)
       const lowSim = tier.kind === 'candidate'
-      const levelTag = hedgeOnly
-        ? (d.hedgedAfter ? '（引入 hedge）' : '（移除 hedge）')
-        : `${d.levelBefore} → ${d.levelAfter}`
+      const deltaTag = d.deltas && d.deltas.length > 0 ? d.deltas.join('，') : `${d.levelBefore} → ${d.levelAfter}`
       hits.push({
         ruleId: 'claim-drift',
         category: 'claim_calibration',
@@ -2292,17 +2391,13 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         findingKind: tier.kind,
         label: `主张${axis}被${up ? '抬高' : '削弱'}（${d.beforeWord} → ${d.afterWord}）`,
         paragraphIndex: -1,
-        snippet: `改前（${axis} ${levelTag}）：${d.before} … 改后（${axis} ${levelTag}）：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
+        snippet: `改前：${d.before} … 改后：${d.after}（delta：${deltaTag}；对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
         message:
-          (hedgeOnly
-            ? `语言润色${d.hedgedAfter ? '引入了' : '移除了'}不确定限定（hedge：${d.beforeWord} → ${d.afterWord}）——限定状态的改变同样改变科学主张的确定性。`
-            : `语言润色${up ? '抬高了' : '削弱了'}科学主张的${axis}（${d.axis === 'causal' ? '因果阶梯' : '证据阶梯'} ${d.levelBefore} → ${d.levelAfter}）。`) +
+          `语言润色改变了科学主张（${deltaTag}）。` +
           (lowSim ? '句对齐相似度较低（<0.55），本条为 CANDIDATE——请人工复核是否确实发生了主张变化。' : 'polishing 不应改变 science——无论往强还是往弱。'),
         suggestion: `恢复原主张${axis}（"${d.beforeWord}"），除非作者显式授权修改科学结论。`,
         evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills claim-strength ladder（Apache-2.0，adapted，见 THIRD_PARTY.md）' },
-        matchText: hedgeOnly
-          ? `epistemic:claim:${d.axis}:hedge-${d.hedgedBefore}-${d.hedgedAfter}`
-          : `epistemic:claim:${d.axis}:${d.levelBefore}->${d.levelAfter}`,
+        matchText: `epistemic:claim:${d.axis}:${d.levelBefore}->${d.levelAfter}`,
       })
     }
     for (const d of ed.negationRemoved) {
@@ -2372,6 +2467,23 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         matchText: `epistemic:scope-removed:${d.marker}`,
       })
     }
+    // v1.1：scope 新增（主张可能被缩窄——外部有效性悄悄收窄同样是科学变化）
+    for (const d of ed.scopeAdded) {
+      hits.push({
+        ruleId: 'scope-drift',
+        category: 'claim_calibration',
+        severity: 'low',
+        confidence: 'medium',
+        findingKind: 'invariant',
+        label: `scope 边界被引入（${d.marker}）——主张可能被缩窄`,
+        paragraphIndex: -1,
+        snippet: `改前：${d.before} … 改后：${d.after}（对齐相似度 ${(d.sim * 100).toFixed(0)}%）`,
+        message: `修改后引入了 scope 边界标记（${d.marker}）：原句未限定范围，现在限定了——主张从一般陈述变成受限陈述，外部有效性可能被悄悄收窄。不自动判错，请核验。`,
+        suggestion: '若范围确未改变，删除新增边界；若作者有意缩窄声明范围，显式确认。',
+        evidence: { type: 'literature', source: 'Evidence-Bound: scope conditions KEEP（MIT，见 THIRD_PARTY.md）' },
+        matchText: `epistemic:scope-added:${d.marker}`,
+      })
+    }
 
     // v1.0 Evidence-Status Lock：证据来源状态（reported/observed/measured…）守恒。
     // "participants reported improvement" ≠ "participants improved"——报告≠事实；
@@ -2423,7 +2535,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         diff.added.filter((a) => citTypes.has(a.type)).length,
       claimDrift: ed.claimDrift.length,
       negationDrift: ed.negationRemoved.length + ed.negationAdded.length + ed.nullResultRemoved.length,
-      scopeDrift: ed.scopeRemoved.length,
+      scopeDrift: ed.scopeRemoved.length + ed.scopeAdded.length,
       evidenceStatusDrift: ed.evidenceStatusRemoved.length + ed.evidenceStatusAdded.length,
     }
     }

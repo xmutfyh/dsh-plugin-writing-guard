@@ -203,6 +203,23 @@ Scientific tokens          Scientific commitments
 > **Scholarship Lock = token multiset integrity；Epistemic Lock = semantic-marker multiset
 > integrity**（v0.9.2 评审架构落地）。
 
+## v1.1 claim-bound integrity（marker 绑定到主张）
+
+1.0 评审（9.2/10）的核心升级：marker 不再对整句做"袋子"比较，而是**绑定到所属子句**：
+
+| 能力 | 检测什么 | 例子 |
+|---|---|---|
+| **claim-bound 守恒** 🔴 | 否定/零结果/scope/证据状态按子句配对比较（未配对子句全句兜底）——**标记交换**不再被句子级 multiset 掩盖 | `X did not improve, but Y improved` → `X improved, but Y did not improve`（两边都是 did not ×1，但结论交换了）✅ |
+| **主语一致性配对** | 配对加分：同一实体的主张优先配对 | `X did not improve` 配 `X improved` 而非相似度更高的 `Y did not improve` |
+| **marker canonicalization** | 大小写/英美拼写归一 | `Observed→observed`、`modelled→modeled` 不再误报 |
+| **scope 新增事件** 🟡 | 引入边界 = 外部有效性可能被缩窄 | `The treatment improves survival` → `In this cohort, …` |
+| **`shows that` 角色修复** | that-complement 恢复 epistemic | `Figure 4 shows that X increases survival` → suggest 漂移可检出；`Figure shows architecture` 仍 descriptive |
+| **多轴 delta 单事件** | causal+evidential+hedge 同条保留 | `delta：因果力 1→5，证据力 1→5，hedge 有→无` |
+| **version-gap F1** | 对齐率改 symmetric coverage | before=100/after=10 全对齐不再误判 100% 可比 |
+| **null/negation 去重** | 重叠事件只报更具体的一条 | `did not improve` 只报零结果事件 |
+
+测试 209 → 218 项。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——
@@ -342,7 +359,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 209 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒回归）
+npm test   # 自动先 build 再跑 218 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark/版本差距保护/证据状态守恒/claim-bound 交换回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

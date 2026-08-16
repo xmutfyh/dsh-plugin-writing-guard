@@ -4,6 +4,43 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-16
+
+### Added — claim-bound integrity (1.0 评审 P0/P1/P2)
+
+The next layer of the Revision Integrity model: markers are now **bound to the claim they belong
+to**, not a bag-of-markers over the sentence.
+
+- **Claim-bound marker conservation (P0)**: negation/null/scope/evidence-status are compared per
+  aligned clause pair (with unmatched-clause fallbacks against the full sentence on the other
+  side). The swap case the sentence-level multiset could not see is now caught:
+  "X did not improve, but Y improved" → "X improved, but Y did not improve" (both `did not` counts
+  identical at sentence level, scientific conclusions swapped).
+- **Subject-consistency pairing reward (P0, discovered while testing the swap case)**: best-match
+  pairing adds a +0.3 score when both clauses share the same subject — "X did not improve" now
+  pairs with "X improved" instead of the lexically closer "Y did not improve".
+- **Marker canonicalization (P0)**: diff keys are canonicalized (lowercase; modelled/modeled →
+  modelled; self reported/self-report* → self-reported) — case-only or en-US/en-GB spelling edits
+  are no longer reported as status drift.
+- **Scope-added events (P1)**: introducing a scope boundary ("The treatment improves survival" →
+  "In this cohort, …") is a possible narrowing of external validity — LOW/invariant event, while
+  removal stays MEDIUM.
+- **`shows that` / `demonstrates that` role fix (P1)**: that-complements restore epistemic role
+  even when the subject is Figure/Table ("Figure 4 shows that treatment increases survival");
+  only display objects (architecture/workflow/schematic/example) stay descriptive.
+- **Multi-axis deltas in one claim-drift event (P1)**: causal + evidential + hedge changes on the
+  same clause are all preserved in a single hit (`delta：因果力 1→5，证据力 1→5，hedge 有→无`)
+  instead of silently dropping secondary axes.
+- **Version-gap symmetric coverage (P2)**: alignment rate now uses `2·aligned/(before+after)`
+  (F1) — before=100 / after=10 with all 10 aligned no longer reads as 100% comparable.
+- **Null/negation overlap dedup (P2)**: "did not improve" matching both negation and null-result
+  regexes now reports the more specific null-result event only.
+
+### Tests
+
+- 209 → 218: negation swap TP, evidence-status swap TP, canonical TNs, scope-added TP,
+  shows-that TP + descriptive TN, multi-axis deltas preserved.
+
 ## [1.0.0] - 2026-08-16
 
 ### Added — Evidence-Status Lock (Revision Integrity model complete)

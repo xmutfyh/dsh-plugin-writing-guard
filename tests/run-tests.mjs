@@ -1192,6 +1192,75 @@ console.log('=== 64. v1.0 证据状态守恒（Evidence-Status Lock）===')
   check('integrity.evidenceStatusDrift > 0', (int.integrity?.evidenceStatusDrift ?? 0) > 0, JSON.stringify(int.integrity))
 }
 
+console.log('=== 65. v1.1 claim-bound markers（标记交换不再被 multiset 掩盖）===')
+{
+  // 分析核心案例：否定标记在子句间交换——句子级 multiset 两边都是 did not ×1
+  const swap = auditText(
+    'X improved, but Y did not improve.',
+    { profile: 'manuscript', original: 'X did not improve, but Y improved.' },
+  )
+  check('claim-bound TP (negation swapped between clauses)', hasRule(swap, 'negation-drift'), JSON.stringify(swap.hits.map((h) => h.snippet)))
+
+  // 证据状态交换：observed/estimated 互换
+  const esSwap = auditText(
+    'X was estimated, while Y was observed.',
+    { profile: 'manuscript', original: 'X was observed, while Y was estimated.' },
+  )
+  check('claim-bound TP (evidence status swapped)', hasRule(esSwap, 'evidence-status-drift'), JSON.stringify(esSwap.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 66. v1.1 marker canonicalization（大小写/英美拼写不误报）===')
+{
+  const caseT = auditText(
+    'The observed rate was 2.1 m/h.',
+    { profile: 'manuscript', original: 'The Observed rate was 2.1 m/h.' },
+  )
+  check('canonical TN (Observed → observed)', !hasRule(caseT, 'evidence-status-drift'), JSON.stringify(caseT.hits.map((h) => h.snippet)))
+
+  const spell = auditText(
+    'The modeled results suggest a decline.',
+    { profile: 'manuscript', original: 'The modelled results suggest a decline.' },
+  )
+  check('canonical TN (modelled → modeled)', !hasRule(spell, 'evidence-status-drift'), JSON.stringify(spell.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 67. v1.1 scopeAdded + Figure shows that 角色 ===')
+{
+  // scope 新增：一般陈述 → 受限陈述（可能缩窄外部有效性）
+  const added = auditText(
+    'In this cohort, the treatment improves survival.',
+    { profile: 'manuscript', original: 'The treatment improves survival.' },
+  )
+  check('scope-added TP (general → restricted)', hasRule(added, 'scope-drift'), JSON.stringify(added.hits.map((h) => h.snippet)))
+
+  // "Figure 4 shows that X increases survival" 的 shows that 承担 epistemic claim（v1.1 角色修复）
+  const figThat = auditText(
+    'Figure 4 suggests that the treatment increases survival.',
+    { profile: 'manuscript', original: 'Figure 4 shows that the treatment increases survival.' },
+  )
+  check('shows-that TP (epistemic role kept despite Figure subject)', hasRule(figThat, 'claim-drift'), JSON.stringify(figThat.hits.map((h) => h.snippet)))
+
+  // "Figure 4 shows the model architecture" 仍是 descriptive
+  const figDesc = auditText(
+    'Figure 4 presents the model architecture.',
+    { profile: 'manuscript', original: 'Figure 4 shows the model architecture.' },
+  )
+  check('shows-descriptive TN (Figure shows architecture)', !hasRule(figDesc, 'claim-drift'), JSON.stringify(figDesc.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 68. v1.1 多轴 delta 单 hit（causal+evidential+hedge 不丢轴）===')
+{
+  const multi = auditText(
+    'The results demonstrate that X causes Y.',
+    { profile: 'manuscript', original: 'The results may suggest an association between X and Y.' },
+  )
+  const h = multi.hits.find((x) => x.ruleId === 'claim-drift')
+  check('multi-axis TP (single hit)', hasRule(multi, 'claim-drift'), JSON.stringify(multi.hits.map((x) => x.snippet)))
+  // causal(1→5) + evidential(1→5) + hedge(有→无) 三个 delta 都在同一条里
+  const snippet = h?.snippet ?? ''
+  check('multi-axis deltas preserved', snippet.includes('因果力') && snippet.includes('证据力') && snippet.includes('hedge'), snippet.slice(0, 200))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {
