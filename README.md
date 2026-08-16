@@ -4,7 +4,8 @@
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
 > DeepSeek Harness (DSH) 论文写作守卫：在论文撰写和修改过程中自动检查常见 AI 写作风格、
-> 修改残留、防御性表达与机械化句式，并在润色时保护科研事实（Scholarship Lock）。
+> 修改残留、防御性表达与机械化句式，并在润色时保护科研事实与科学主张完整性
+> （Scholarship Lock + Epistemic Lock——数字、引用、主张强度、否定/零结果、scope 边界都不许被语言修改悄悄改变）。
 
 **适用于：中文论文、英文论文、SCI manuscript、毕业论文、学术写作与论文润色。**
 
@@ -24,10 +25,12 @@
 它提供三个 DSH 原生工具：
 
 - `writing_rules`：写作前加载学术写作纪律
-- `writing_audit`：检查论文中的 AI-style patterns、revision residue、defensive writing、LLM 高频表达及结构化写作痕迹；v0.6 起支持 Scholarship Lock（传 `original` 对比润色前后科研事实）与作者风格档案（`styleProfile`）
+- `writing_audit`：检查论文中的 AI-style patterns、revision residue、defensive writing、LLM 高频表达及结构化写作痕迹；v0.6 起支持 Scholarship Lock（传 `original` 对比润色前后科研事实）与作者风格档案（`styleProfile`）；v0.8 起自动路径直接启用双锁（见下）
 - `writing_style_profile`：从作者历史论文统计写作风格指标（句长/密度），零 LLM
 
-并支持在 `.md` / `.tex` / `.txt` 论文文件被 `write` / `edit` 修改后自动执行审计（v0.5 增量模式），将高风险问题反馈给 Agent。
+并支持在 `.md` / `.tex` / `.txt` 论文文件被 `write` / `edit` 修改后自动执行审计（v0.5 增量模式），
+将高风险问题反馈给 Agent。**v0.8 起自动审计自动捕获修改前的文本**（`tools/pre-execute` 快照 +
+持久化基线缓存），每次写入后直接运行 Scholarship Lock + Epistemic Lock——不需要手动传 `original`。
 
 > 定位：不是 "AI 检测器"，而是一个知道自己在检查什么文档、能解释"为什么报"的写作 linter。
 > 所有规则为本地正则/统计，零网络、零 LLM 调用，毫秒级返回。
@@ -139,6 +142,26 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 | **writing_rules 新增章节** | 「局限性与学术自信」：自黑改写公式 + 主张动词校准表（modelled ≠ observed；suggested < demonstrated）+ ESR 纪律边界 | 只改措辞不改事实 |
 
 另：仓库根新增 `SKILL.md`——规则集的独立静态导出，供没有 DSH 的环境（Codex/Claude Code/Antigravity）直接使用同一套纪律。
+
+## v0.8 科学完整性守卫（Scholarship Lock 2.0 = Epistemic Lock）
+
+定位升级：从"润色后对比数字/引用"到**完整保护作者已提供的 scientific commitments**——
+语言润色不得改变 science，无论往强还是往弱。借鉴 Yila-AI/sci-ssci-skills（Apache-2.0，
+adapted，署名见 [THIRD_PARTY.md](THIRD_PARTY.md)）与 Evidence-Bound（MIT）。
+
+| 能力 | 检测什么 | 例子 |
+|---|---|---|
+| **自动双锁（P0）** | `tools/pre-execute` 捕获修改前文本 + 持久化基线缓存，写入后自动跑 Scholarship + Epistemic Lock | 不再需要手动传 `original`；连续编辑逐次对比 |
+| **主张强度锁** 🔴 | Yila claim ladder（consistent with(0) < associated(1) < predicts(2) < contributes(3) < affects(4) < causes(5)）沿任一方向漂移 | `was associated with` → `caused`：数字没变但结论已变，按 INVARIANT HIGH 报 |
+| **否定/零结果锁** 🔴 | no/not/did not/without 标记删除（阴性结果被翻转）、零结果表述删除（did not improve / no significant difference） | `No significant association` → `A significant association` |
+| **scope 边界锁** 🟠 | in this study / under these conditions / 在本研究中… 从对齐句消失 | 不自动判错，只要求核验"主张是否被泛化" |
+| **findingKind 性质标签** | 每条命中标注 invariant / violation / candidate / advisory | CANDIDATE（"we do not claim"）可能承担正当边界——勿自动删除，人工判定 |
+| **完整性回归报告** | ✓/✗ 数字、引用、主张强度、否定、scope 五行回归块（0 命中也显示） | 报告尾部新增 |
+
+> 原则（v0.8）：cue ≠ verdict——防御性措辞是候选不是判决；删除修辞性防御，但保护 scholarly
+> caution（scope 条件/证据状态/竞争解释/负面发现）。negative、null、矛盾结果是数据，不得删除。
+> 许可：Epistemic Lock 的 claim-strength ladder 思想改编自 Yila-AI/sci-ssci-skills（Apache-2.0），
+> candidate 判定模型借鉴 Evidence-Bound（MIT）——见 THIRD_PARTY.md。
 
 ## 密度阈值（v0.3.3）
 
@@ -266,7 +289,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 149 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案回归）
+npm test   # 自动先 build 再跑 170 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案/Epistemic Lock mutation benchmark 回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

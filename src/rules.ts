@@ -35,8 +35,19 @@ export type Severity = 'high' | 'medium' | 'low'
 
 export type Confidence = 'high' | 'medium' | 'low'
 
+/**
+ * v0.8 findingKind：命中的"性质"，把"危险等级"与"问题性质"解耦（借鉴
+ * Evidence-Bound 的 cue ≠ verdict 判定模型）：
+ *  - invariant   科学完整性不变量（数字/引用/主张强度/否定/scope）——改动即事故
+ *  - violation   明确的纪律违规（修改过程残留、自黑免责）——应当修正
+ *  - candidate   防御性写作候选——可能是修辞防御，也可能承担正当的 claim 边界，
+ *                不得自动删除，需人工判定（KEEP/TIGHTEN/REFRAME/RELOCATE/CUT/QUERY）
+ *  - advisory    纯文体建议（风格/格式/LLM 词密度）——低风险，可保留并说明
+ */
+export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
+
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '0.7.0'
+export const PLUGIN_VERSION = '0.8.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -327,6 +338,188 @@ const SCHOLARSHIP_TYPE_LABEL: Record<ScholarshipType, string> = {
   cite: '\\cite 引用', ref: '\\ref 引用', figure: 'Figure 编号', table: 'Table 编号', doi: 'DOI',
 }
 
+// ---------------------------------------------------------------------------
+// v0.8 Epistemic Lock：主张强度 / 否定 / 零结果 / scope 边界的润色前后对比（零 LLM）
+// ---------------------------------------------------------------------------
+// 借鉴 Yila-AI/sci-ssci-skills（Apache-2.0）的 claim-strength ladder 与 invariant
+// 检查思想（adapted，署名见 THIRD_PARTY.md），以及 Evidence-Bound 的 scope/
+// evidence-status 保全原则。定位：语言润色不得让科学主张沿阶梯静默移动，
+// 无论变强还是变弱——科学变化需要作者显式授权。
+
+export type EpistemicMarkerType =
+  | 'uncertainty' | 'association' | 'prediction' | 'contribution' | 'effect' | 'causation'
+  | 'negation' | 'null_result' | 'scope'
+
+/** 主张强度阶梯（0=不确定 … 5=因果）。修改不得静默沿任一方向移动。 */
+const CLAIM_LADDER: { level: number; type: EpistemicMarkerType; pattern: RegExp }[] = [
+  { level: 0, type: 'uncertainty', pattern: /\b(consistent with|compatible with|appears? to|seems? to|may|might|could|potentially|possibly)\b|\b(may|might|could)\s+(suggest|indicate|reflect)\b/gi },
+  { level: 1, type: 'association', pattern: /\b(associat(es|ed|ion)? with|relat(es|ed)? to|correlat(es|ed|ion)? with|link(s|ed)? to|co-?occur(s|red)? with)\b/gi },
+  { level: 2, type: 'prediction', pattern: /\b(predict(s|ed|ion)?|forecast(s|ed)?|anticipat(es|ed)?)\b/gi },
+  { level: 3, type: 'contribution', pattern: /\b(contribut(es|ed|ing)? to|plays? a role in|is involved in)\b/gi },
+  { level: 4, type: 'effect', pattern: /\b(affect(s|ed)?|lead(s|ing)? to|led to|reduc(es|ed)?|increas(es|ed)?|decreas(es|ed)?|improv(es|ed)?|lower(s|ed)?|alter(s|ed)?|modif(ies|ied)?|influenc(es|ed)?|result(s|ing)? in|resulted in|promot(es|ed)?|inhibit(s|ed)?|enhanc(es|ed)?|suppress(es|ed)?|trigger(s|ed)?|accelerat(es|ed)?|attenuat(es|ed)?|impair(s|ed)?|boost(s|ed)?)\b/gi },
+  { level: 5, type: 'causation', pattern: /\b(caus(es|ed)?|demonstrat(es|ed)?|prov(es|ed)?|establish(es|ed)?|confirm(s|ed)?|guarantee(s|d)?|determin(es|ed)?|driv(es|en)? by|results? from|stems? from)\b/gi },
+]
+
+// 注意：以下只用于 .test() 的 regex 一律不带 /g（避免 lastIndex 状态污染导致间歇性漏检）
+const NEGATION_RE = /\b(no|not|did not|does not|do not|without|neither|never|non-?significant|no difference|not associated|not significant|failed to|absence of|no effect|no association|no correlation)\b/i
+
+const NULL_RESULT_RE = /\b(no significant|not significant|no difference|no effect|did not (improve|change|reduce|affect)|remained unchanged|failed to (improve|change|reduce|affect)|no association|no correlation|absence of (effect|association|improvement)|not associated)\b/i
+
+/** scope 边界标记（EN + ZH）。消失即提示"可能被泛化"——不自动判错，只要求核验。 */
+const SCOPE_RE = /(within this (sample|cohort|study|dataset)|in this (cohort|study|dataset|experiment|system|setup)|in our (experiments?|study|dataset)|under these conditions|under the (tested|investigated) conditions|during the (study|experiment) period|among participants|for the evaluated datasets?|internally validated|externally validated|for the tested (range|conditions)|at the tested (temperature|pressure|rates?)|in the investigated (system|range)|in the present (study|dataset|work)|in the current work|在本研究中|在本样本中|在该队列中|在上述条件下|在研究期间|对于本数据集|在本实验中|在当前工况下|在所研究的|在测试的|在考察的|内部验证|外部验证)/i
+
+export interface EpistemicMarkers {
+  /** 主张强度阶梯最高层（无 ladder 词为 -1） */
+  claimLevel: number
+  ladderWords: string[]
+  negation: boolean
+  nullResult: boolean
+  scope: boolean
+}
+
+/** 关联句中的描述性分词不升级主张强度："was associated with reduced mortality" 是关联主张，
+ *  不是效应主张——'with <adj-participle> <noun>' 结构里的 reduced/increased/improved 是形容词修饰 */
+const ASSOC_DESCRIPTOR_RE = /associated with(?: (?:a|an|the) )?(?: [\w-]+){0,3} (reduced|increased|decreased|improved|lower|higher|greater|elevated|altered|modified|enhanced|suppressed|impaired)\b/i
+
+/** 提取单句的 epistemic markers（纯正则，零 LLM） */
+export function extractEpistemicMarkers(sentence: string): EpistemicMarkers {
+  let claimLevel = -1
+  const ladderWords: string[] = []
+  let hasAssociation = false
+  for (const rung of CLAIM_LADDER) {
+    const m = sentence.match(rung.pattern)
+    if (m && m.length > 0) {
+      if (rung.level > claimLevel) claimLevel = rung.level
+      ladderWords.push(...m)
+      if (rung.level === 1) hasAssociation = true
+    }
+  }
+  // 关联句 + 描述性分词：主张强度封顶在关联层（"associated with reduced mortality" ≠ "reduced mortality"）
+  if (hasAssociation && claimLevel >= 4 && ASSOC_DESCRIPTOR_RE.test(sentence)) {
+    claimLevel = 1
+  }
+  return {
+    claimLevel,
+    ladderWords,
+    negation: NEGATION_RE.test(sentence),
+    nullResult: NULL_RESULT_RE.test(sentence),
+    scope: SCOPE_RE.test(sentence),
+  }
+}
+
+/** 句对齐：贪心匹配 before→after（cosine ≥ minSim 且句位差 ≤ window）；返回配对索引 */
+export function alignSentences(
+  before: string[],
+  after: string[],
+  minSim = 0.45,
+  window = 4,
+): Array<{ beforeIdx: number; afterIdx: number; sim: number }> {
+  const beforeToks = before.map(tokenizeForSimilarity)
+  const afterToks = after.map(tokenizeForSimilarity)
+  const used = new Set<number>()
+  const pairs: Array<{ beforeIdx: number; afterIdx: number; sim: number }> = []
+  for (let i = 0; i < before.length; i++) {
+    let best = -1
+    let bestSim = minSim
+    for (let j = 0; j < after.length; j++) {
+      if (used.has(j) || Math.abs(i - j) > window) continue
+      const sim = cosineSimilarity(beforeToks[i], afterToks[j])
+      if (sim > bestSim) {
+        bestSim = sim
+        best = j
+      }
+    }
+    if (best >= 0) {
+      used.add(best)
+      pairs.push({ beforeIdx: i, afterIdx: best, sim: bestSim })
+    }
+  }
+  return pairs
+}
+
+export interface EpistemicDrift {
+  /** 主张强度沿阶梯移动（up=变强 / down=变弱；任何方向都改变科学结论） */
+  claimDrift: Array<{ before: string; after: string; levelBefore: number; levelAfter: number; beforeWord: string; afterWord: string }>
+  /** 否定标记被删除（负/零结果可能被翻转） */
+  negationRemoved: Array<{ before: string; after: string; marker: string }>
+  /** 否定标记被引入 */
+  negationAdded: Array<{ before: string; after: string }>
+  /** 零结果表述被删除 */
+  nullResultRemoved: Array<{ before: string; after: string }>
+  /** scope 边界消失（主张可能被泛化） */
+  scopeRemoved: Array<{ before: string; after: string }>
+}
+
+/**
+ * v0.8 Epistemic Lock：对比修改前后的科学主张完整性。
+ * 与 Scholarship Lock（科研 token 守恒）互补：数字/引用没动，但
+ * "associated → caused"、"No significant… → A significant…"、
+ * "Among participants in this study… → …generally" 同样改变了科学结论。
+ */
+export function diffEpistemic(before: string, after: string): EpistemicDrift {
+  const out: EpistemicDrift = { claimDrift: [], negationRemoved: [], negationAdded: [], nullResultRemoved: [], scopeRemoved: [] }
+  const bs = splitSentences(before)
+  const as = splitSentences(after)
+  const pairs = alignSentences(bs, as)
+  for (const { beforeIdx, afterIdx } of pairs) {
+    const b = bs[beforeIdx]
+    const a = as[afterIdx]
+    const bm = extractEpistemicMarkers(b)
+    const am = extractEpistemicMarkers(a)
+    // 1) 主张强度漂移（任一方必须有 ladder 词才判定）
+    if (bm.claimLevel >= 0 || am.claimLevel >= 0) {
+      if (am.claimLevel !== bm.claimLevel) {
+        const beforeWord = bm.ladderWords.length > 0 ? bm.ladderWords[bm.ladderWords.length - 1] : '(无)'
+        const afterWord = am.ladderWords.length > 0 ? am.ladderWords[am.ladderWords.length - 1] : '(无)'
+        out.claimDrift.push({
+          before: b.slice(0, 120), after: a.slice(0, 120),
+          levelBefore: Math.max(bm.claimLevel, 0), levelAfter: Math.max(am.claimLevel, 0),
+          beforeWord, afterWord,
+        })
+      }
+    }
+    // 2) 否定标记（删除 = 可能翻转负/零结果；引入 = 可能凭空加入否定）
+    if (bm.negation && !am.negation) {
+      const m = b.match(NEGATION_RE)
+      out.negationRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120), marker: m ? m[0] : '(否定词)' })
+    } else if (!bm.negation && am.negation) {
+      out.negationAdded.push({ before: b.slice(0, 120), after: a.slice(0, 120) })
+    }
+    // 3) 零结果表述被删除
+    if (bm.nullResult && !am.nullResult) {
+      out.nullResultRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120) })
+    }
+    // 4) scope 边界消失（不自动判错，只要求核验是否被泛化）
+    if (bm.scope && !am.scope) {
+      out.scopeRemoved.push({ before: b.slice(0, 120), after: a.slice(0, 120) })
+    }
+  }
+  return out
+}
+
+/** v0.8 findingKind 推导（缺省语义；invariant 类在代码中显式标注） */
+export function resolveFindingKind(rule: Pick<Rule, 'findingKind' | 'severity' | 'category'>): FindingKind {
+  if (rule.findingKind) return rule.findingKind
+  if (rule.severity === 'high') {
+    return rule.category === 'claim_calibration' ? 'candidate' : 'violation'
+  }
+  return rule.category === 'claim_calibration' ? 'candidate' : 'advisory'
+}
+
+/** v0.8 科学完整性回归摘要（仅 original 对比时生成） */
+export interface IntegritySummary {
+  /** 数字/统计量/百分数/p 值/CI 变化数 */
+  numericChanged: number
+  /** cite/ref/Figure/Table 编号/DOI 变化或消失数 */
+  citationChanged: number
+  /** 主张强度漂移数 */
+  claimDrift: number
+  /** 否定/零结果变化数 */
+  negationDrift: number
+  /** scope 边界消失数 */
+  scopeDrift: number
+}
+
 export interface Rule {
   id: string
   category: Category
@@ -374,6 +567,12 @@ export interface Rule {
    * 那个抓单句极端，这个抓整体均值。
    */
   averageLength?: { enMaxWords: number; zhMaxChars: number }
+  /**
+   * v0.8 findingKind：命中性质（缺省按 severity/category 推导——
+   * high+非 claim_calibration → violation；claim_calibration → candidate；其余 advisory）。
+   * 需要偏离默认语义的规则显式声明（如 invariant 类规则在代码中直接标注）。
+   */
+  findingKind?: FindingKind
 }
 
 export interface Hit {
@@ -387,6 +586,9 @@ export interface Hit {
   message: string
   suggestion: string
   note?: string
+  /** v0.8：命中性质（invariant/violation/candidate/advisory）——"危险等级"与"问题性质"解耦；
+   *  报告生成前统一补齐（缺省按 severity/category 推导） */
+  findingKind?: FindingKind
   /** v0.3.1：证据来源传播到报告（confidence+evidence 要落地到 UX） */
   evidence?: Evidence
   /** 密度信息（全文统计级规则） */
@@ -423,6 +625,8 @@ export interface AuditReport {
   }
   stats: Stats
   hits: Hit[]
+  /** v0.8：科学完整性回归摘要（仅提供 original 时生成） */
+  integrity?: IntegritySummary
 }
 
 export const CATEGORY_LABELS: Record<Category, string> = {
@@ -504,6 +708,8 @@ const RULES: Rule[] = [
     profiles: ['manuscript', 'unknown'],
     languages: ['en'],
     evidence: { type: 'heuristic' },
+    // v0.8：明确违规（修改过程残留），非 candidate
+    findingKind: 'violation',
   },
   {
     id: 'cn-revision-process',
@@ -534,6 +740,9 @@ const RULES: Rule[] = [
     profiles: ['manuscript', 'unknown'],
     languages: ['en'],
     evidence: { type: 'style-guide', source: '扬长避短提示词：不要主动提供负面评价' },
+    // v0.8（Evidence-Bound 借鉴）：cue ≠ verdict——"we do not claim" 也可能承担
+    // 正当的 epistemic boundary（如 "We do not claim that this association is causal"）
+    note: 'candidate 判定：此措辞也可能承担正当的边界功能（scope/证据状态/因果边界/竞争解释）——不要自动删除，人工判定（KEEP/TIGHTEN/REFRAME/RELOCATE/CUT/QUERY）。',
   },
   {
     id: 'cn-defensive-claim',
@@ -548,7 +757,7 @@ const RULES: Rule[] = [
     profiles: ['manuscript', 'unknown'],
     languages: ['zh'],
     evidence: { type: 'style-guide' },
-    note: '陈述研究局限性是 ICMJE 的正当要求（Discussion 应讨论局限），本规则只针对“反复否认主张”句式，不针对 limitations 段落本身。',
+    note: '陈述研究局限性是 ICMJE 的正当要求（Discussion 应讨论局限），本规则只针对“反复否认主张”句式，不针对 limitations 段落本身。candidate 判定：此措辞也可能承担正当的 epistemic boundary——不要自动删除，人工判定。',
   },
   {
     id: 'self-deprecation',
@@ -558,7 +767,8 @@ const RULES: Rule[] = [
     label: '自我削弱词',
     pattern: /(遗憾的[是地]|仍明显落后|效果有限|存在严重不足|仅能初步|只能算|不敢说|远远不够|非常有限|尚显不足)/g,
     message: '检测到自我削弱式表达（“遗憾的是/仍明显落后/效果有限/存在严重不足”）。',
-    suggestion: '删除或改写为客观结果陈述；不占优的结果要么不设为比赛项目，要么从目标/约束/场景解释，不要主动示弱。',
+    // v0.8（Evidence-Bound 借鉴）：宽泛自我否定 → 精确受证据约束的描述；负面/零/矛盾结果是数据，不得删除
+    suggestion: '把宽泛的自我否定改写为精确的、受证据约束的描述（如“本研究未覆盖高温高压工况，属于范围边界”）；不得因为负面/零/矛盾结果削弱叙事就删除它们——阴性发现本身是数据。',
     maxHits: 3,
     profiles: ['manuscript', 'unknown'],
     languages: ['zh'],
@@ -578,6 +788,8 @@ const RULES: Rule[] = [
     profiles: ['manuscript', 'unknown'],
     languages: ['en'],
     evidence: { type: 'heuristic' },
+    // v0.8：candidate 判定（cue ≠ verdict）
+    note: 'candidate 判定：此措辞也可能承担正当的边界功能——不要自动删除，人工判定。',
   },
   {
     id: 'limitations-across-sections',
@@ -752,7 +964,9 @@ const RULES: Rule[] = [
     label: '“we believe/think” 弱表态',
     pattern: /\bwe (believe|think|feel|hope|wish|suspect)\b/gi,
     message: '“we believe/think”是弱表态，削弱结论力度。',
-    suggestion: '改为证据导向表述：“the results show / the data indicate / this is consistent with…”。',
+    // v0.8（Evidence-Bound 借鉴）：不要把作者解释升级成证据主张——
+    // "we believe X" → "the results show X" 可能悄悄发生 author interpretation → evidence claim
+    suggestion: '若这是作者解释，用证据校准措辞：“One possible explanation is…” / “This finding may reflect…”；只有证据直接支持时才用 “the results show / the data indicate”——不要把作者判断升级成证据主张（interpretation → evidence claim 属于主张强度漂移）。',
     maxHits: 3,
     languages: ['en'],
     evidence: { type: 'heuristic' },
@@ -816,7 +1030,7 @@ const RULES: Rule[] = [
     suggestion: '有证据依据的 hedging 是正确学术表达（ICMJE），不要全部删除；重点清理同一条 claim 上的多层限定（见 hedge-stacking）和无需限定的常识结论。Discussion 中可保留正常 hedging；Abstract/Conclusion 应逐句复核。',
     languages: ['en'],
     evidence: { type: 'heuristic' },
-    note: '密度规则：单次 hedge 不报警；这是"防御饱和"的整体行为检测，不是反 hedge 工具。',
+    note: '密度规则：单次 hedge 不报警；这是"防御饱和"的整体行为检测，不是反 hedge 工具。candidate 判定：有证据依据的 hedging 是正确的学术表达（ICMJE）——不要自动删除，人工判定。',
   },
   {
     id: 'hedge-density-zh',
@@ -830,7 +1044,7 @@ const RULES: Rule[] = [
     suggestion: '同一边界只写一次；有依据的限定保留，重复的自我免责删除。',
     languages: ['zh'],
     evidence: { type: 'heuristic' },
-    note: '与"并非要证明"等防御性声明不同，本规则检测的是整体限定密度。',
+    note: '与"并非要证明"等防御性声明不同，本规则检测的是整体限定密度。candidate 判定：有证据依据的 hedging 保留（ICMJE），不要自动删除。',
   },
   {
     id: 'hedge-stacking',
@@ -845,6 +1059,8 @@ const RULES: Rule[] = [
     maxHits: 3,
     languages: ['zh', 'en'],
     evidence: { type: 'heuristic' },
+    // v0.8：candidate 判定（cue ≠ verdict）
+    note: 'candidate 判定：多层限定可能分别标记不同的 scope/来源/因果边界（Evidence-Bound D3）——只压缩真正的冗余层，不要整句删限定。',
   },
   {
     id: 'overlong-sentence-en',
@@ -1017,6 +1233,8 @@ const RULES: Rule[] = [
     languages: ['zh'],
     evidence: { type: 'style-guide', source: 'ko5.6sol 文体指南（KO 过度防御与自黑免责）' },
     note: '正当 limitations（"样本量有限"）不报警；本规则只针对"不可信/无意义/假数据"级自我否定。',
+    // v0.8：自黑免责是明确违规（摧毁论文价值），不是 candidate
+    findingKind: 'violation',
   },
   {
     id: 'llm-buzzword-en',
@@ -1725,11 +1943,15 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         message: `检测到项目内部词表条目 "${m[0]}"（可通过 writing_audit 的 projectResidueTerms 参数或插件配置维护）。`,
         suggestion: '确认为内部流程词则删除或改写；若不是内部词，请从 projectResidueTerms 移除。',
         evidence: { type: 'project-specific' },
+        findingKind: 'violation',
         matchText: m[0],
       })
       re.lastIndex = 0
     }
   }
+
+  // v0.8：科学完整性回归摘要（仅 original 对比时生成）
+  let integrity: IntegritySummary | undefined
 
   // v0.6 Scholarship Lock：对比修改前后的科研实体（数字/引用/图表编号/DOI）。
   // 注意用原始文本（view.raw）——prose 已剥离 \cite 等 LaTeX 命令，无法对比引用。
@@ -1742,6 +1964,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         category: 'claim_calibration',
         severity: 'high',
         confidence: 'high',
+        findingKind: 'invariant',
         label: `科研实体被修改（${SCHOLARSHIP_TYPE_LABEL[c.type]}）`,
         paragraphIndex: -1,
         snippet: `${c.before} → ${c.after}`,
@@ -1758,6 +1981,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         category: 'claim_calibration',
         severity: 'high',
         confidence: 'high',
+        findingKind: 'invariant',
         label: `科研实体消失（${SCHOLARSHIP_TYPE_LABEL[r.type]}）`,
         paragraphIndex: -1,
         snippet: r.value,
@@ -1766,6 +1990,109 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         evidence: { type: 'heuristic' },
         matchText: `scholarship-removed:${r.type}:${r.value}`,
       })
+    }
+
+    // v0.8 Epistemic Lock：主张强度 / 否定 / 零结果 / scope 边界的润色前后对比。
+    // 与 Scholarship Lock 互补——数字/引用没变，但科学结论可能已经被语言修改改变。
+    // 原则：polishing 不得让科学主张沿阶梯静默移动（无论变强还是变弱）；负面、
+    // 零结果、矛盾结果是数据，不得因削弱叙事而删除；scope 边界消失只要求核验。
+    const ed = diffEpistemic(opts.original, view.raw)
+    for (const d of ed.claimDrift) {
+      const up = d.levelAfter > d.levelBefore
+      hits.push({
+        ruleId: 'claim-drift',
+        category: 'claim_calibration',
+        severity: 'high',
+        confidence: 'high',
+        findingKind: 'invariant',
+        label: `主张强度被${up ? '抬高' : '削弱'}（${d.beforeWord} → ${d.afterWord}）`,
+        paragraphIndex: -1,
+        snippet: `改前（L${d.levelBefore}）：${d.before} … 改后（L${d.levelAfter}）：${d.after}`,
+        message: `语言润色${up ? '抬高了' : '削弱了'}科学主张强度（阶梯 ${d.levelBefore} → ${d.levelAfter}）。polishing 不应改变 science——无论往强还是往弱。`,
+        suggestion: `恢复原主张强度（"${d.beforeWord}"），除非作者显式授权修改科学结论。`,
+        evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills claim-strength ladder（Apache-2.0，adapted，见 THIRD_PARTY.md）' },
+        matchText: `epistemic:claim:${d.levelBefore}->${d.levelAfter}`,
+      })
+    }
+    for (const d of ed.negationRemoved) {
+      hits.push({
+        ruleId: 'negation-drift',
+        category: 'claim_calibration',
+        severity: 'high',
+        confidence: 'high',
+        findingKind: 'invariant',
+        label: `否定标记被删除（${d.marker}）——负/零结果可能被翻转`,
+        paragraphIndex: -1,
+        snippet: `改前：${d.before} … 改后：${d.after}`,
+        message: '修改后删除了否定标记（no/not/did not…）：阴性结果或零结果表述可能被悄悄翻转。',
+        suggestion: '恢复否定标记；如科学结论确实改变，需作者显式授权并同步修改数字/统计量。',
+        evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills invariant checker（adapted）' },
+        matchText: `epistemic:negation-removed:${d.marker}`,
+      })
+    }
+    for (const d of ed.negationAdded) {
+      hits.push({
+        ruleId: 'negation-drift',
+        category: 'claim_calibration',
+        severity: 'medium',
+        confidence: 'medium',
+        findingKind: 'invariant',
+        label: '否定标记被引入',
+        paragraphIndex: -1,
+        snippet: `改前：${d.before} … 改后：${d.after}`,
+        message: '修改后引入了否定标记：原句未否定，现在被否定——核对这是否是作者的意图。',
+        suggestion: '确认否定是作者授权的科学修改；语言润色不应凭空加入否定。',
+        evidence: { type: 'literature', source: 'Yila-AI/sci-ssci-skills invariant checker（adapted）' },
+        matchText: 'epistemic:negation-added',
+      })
+    }
+    for (const d of ed.nullResultRemoved) {
+      hits.push({
+        ruleId: 'negation-drift',
+        category: 'claim_calibration',
+        severity: 'high',
+        confidence: 'high',
+        findingKind: 'invariant',
+        label: '零结果表述被删除',
+        paragraphIndex: -1,
+        snippet: `改前：${d.before} … 改后：${d.after}`,
+        message: '修改后删除了零结果表述（no significant difference / did not improve…）：阴性结果本身是数据，不应因削弱叙事而被删除。',
+        suggestion: '恢复零结果表述；负面、零、矛盾结果必须保留。',
+        evidence: { type: 'literature', source: 'Evidence-Bound: negative/null findings are data（MIT，见 THIRD_PARTY.md）' },
+        matchText: 'epistemic:null-result-removed',
+      })
+    }
+    for (const d of ed.scopeRemoved) {
+      hits.push({
+        ruleId: 'scope-drift',
+        category: 'claim_calibration',
+        severity: 'medium',
+        confidence: 'medium',
+        findingKind: 'invariant',
+        label: 'scope 边界消失（主张可能被泛化）',
+        paragraphIndex: -1,
+        snippet: `改前：${d.before} … 改后：${d.after}`,
+        message: '修改后 scope 边界标记（in this study / under these conditions / 在本研究中…）消失了。不自动判错——请核验主张是否被泛化。',
+        suggestion: '若范围未变，恢复边界标记；若确实外推，需要新的证据与作者授权。',
+        evidence: { type: 'literature', source: 'Evidence-Bound: scope conditions KEEP（MIT，见 THIRD_PARTY.md）' },
+        matchText: 'epistemic:scope-removed',
+      })
+    }
+
+    const numTypes = new Set<ScholarshipType>(['number', 'percent', 'pvalue', 'ci'])
+    const citTypes = new Set<ScholarshipType>(['cite', 'ref', 'figure', 'table', 'doi'])
+    integrity = {
+      numericChanged:
+        diff.changed.filter((c) => numTypes.has(c.type)).length +
+        diff.removed.filter((r) => numTypes.has(r.type)).length +
+        diff.added.filter((a) => numTypes.has(a.type)).length,
+      citationChanged:
+        diff.changed.filter((c) => citTypes.has(c.type)).length +
+        diff.removed.filter((r) => citTypes.has(r.type)).length +
+        diff.added.filter((a) => citTypes.has(a.type)).length,
+      claimDrift: ed.claimDrift.length,
+      negationDrift: ed.negationRemoved.length + ed.negationAdded.length + ed.nullResultRemoved.length,
+      scopeDrift: ed.scopeRemoved.length,
     }
   }
 
@@ -1810,12 +2137,25 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
     else low += 1
   }
 
+  // v0.8：统一补齐 findingKind——规则显式声明优先，否则按 severity/category 推导
+  // （invariant 类已在命中创建时显式标注；规则级 findingKind 如 cn-self-defeating→violation 在这里传播）
+  for (const h of hits) {
+    if (!h.findingKind) {
+      const rule = RULES.find((r) => r.id === h.ruleId)
+      h.findingKind = rule?.findingKind
+        ?? (h.severity === 'high'
+          ? (h.category === 'claim_calibration' ? 'candidate' : 'violation')
+          : (h.category === 'claim_calibration' ? 'candidate' : 'advisory'))
+    }
+  }
+
   return {
     ok: hits.length === 0,
     profile,
     summary: { total: hits.length, high, medium, low, byCategory },
     stats,
     hits,
+    integrity,
   }
 }
 
@@ -1829,6 +2169,18 @@ export function formatReport(report: AuditReport, opts?: { verbose?: boolean }):
   const profileTag = report.profile !== 'unknown' ? `（文档类型: ${report.profile}）` : ''
   lines.push(`写作纪律检查报告${profileTag}：${hits.length === 0 ? '✅ 通过' : `发现 ${summary.total} 处问题（高 ${summary.high} / 中 ${summary.medium} / 低 ${summary.low}）`}`)
   lines.push(`- 统计：${stats.paragraphs} 段 / ${stats.chars} 字符（英文 ${stats.englishWords} 词 + 中文 ${stats.cjkChars} 字）；破折号 ${stats.emDashCount}；rather than ${stats.ratherThanCount}；不是X而是Y ${stats.notXbutYCount}；绝对化定义 ${stats.absolutistCount}；三连排比 ${stats.ruleOfThreeCount}；LLM过渡词 ${stats.transitionCount}；中文套话 ${stats.cnConnectivesCount}；冒号标题 ${stats.colonTitleCount}`)
+  // v0.8：科学完整性回归块（提供 original 时显示；0 命中也显示——"全部保持"本身是结果）
+  if (report.integrity) {
+    const i = report.integrity
+    lines.push('')
+    lines.push('科学完整性回归（Scholarship + Epistemic Lock）：')
+    lines.push(`  ${i.numericChanged === 0 ? '✓' : '✗'} 数字/统计量 ${i.numericChanged === 0 ? '不变' : `变化 ${i.numericChanged} 处`}`)
+    lines.push(`  ${i.citationChanged === 0 ? '✓' : '✗'} 引用/图表编号 ${i.citationChanged === 0 ? '不变' : `变化 ${i.citationChanged} 处`}`)
+    lines.push(`  ${i.claimDrift === 0 ? '✓' : '✗'} 主张强度 ${i.claimDrift === 0 ? '不变' : `漂移 ${i.claimDrift} 处`}`)
+    lines.push(`  ${i.negationDrift === 0 ? '✓' : '✗'} 否定/零结果 ${i.negationDrift === 0 ? '不变' : `变化 ${i.negationDrift} 处`}`)
+    lines.push(`  ${i.scopeDrift === 0 ? '✓' : '⚠'} scope 边界 ${i.scopeDrift === 0 ? '保持' : `消失 ${i.scopeDrift} 处`}`)
+    lines.push('')
+  }
   if (hits.length === 0) return lines.join('\n')
 
   const cats = Object.entries(summary.byCategory)
@@ -1836,6 +2188,10 @@ export function formatReport(report: AuditReport, opts?: { verbose?: boolean }):
     .map(([k, n]) => `${CATEGORY_LABELS[k as Category]} ${n}`)
     .join(' / ')
   lines.push(`- 分类：${cats}`)
+  // v0.8：性质分布（invariant/violation 需处理；candidate 需人工判定；advisory 可保留）
+  const kindCounts = { invariant: 0, violation: 0, candidate: 0, advisory: 0 } as Record<FindingKind, number>
+  for (const h of hits) kindCounts[h.findingKind ?? 'advisory'] += 1
+  lines.push(`- 性质：不变量 ${kindCounts.invariant} / 违规 ${kindCounts.violation} / 候选 ${kindCounts.candidate} / 建议 ${kindCounts.advisory}`)
   lines.push('')
   const order: Record<Severity, number> = { high: 0, medium: 1, low: 2 }
   const confRank: Record<Confidence, number> = { high: 0, medium: 1, low: 2 }
@@ -1845,7 +2201,8 @@ export function formatReport(report: AuditReport, opts?: { verbose?: boolean }):
   for (const h of sorted) {
     const sev = h.severity === 'high' ? '🔴' : h.severity === 'medium' ? '🟠' : '🟡'
     const loc = h.paragraphIndex >= 0 ? `[para ${h.paragraphIndex}]` : '[全文]'
-    lines.push(`${sev} [${h.severity.toUpperCase()} · conf ${h.confidence}] ${h.label} ${loc}`)
+    // v0.8：命中行带性质标签（INVARIANT/VIOLATION/CANDIDATE/ADVISORY）
+    lines.push(`${sev} [${h.severity.toUpperCase()} · conf ${h.confidence} · ${(h.findingKind ?? 'advisory').toUpperCase()}] ${h.label} ${loc}`)
     lines.push(`    原文：${h.snippet.trim().slice(0, 200)}`)
     if (opts?.verbose) {
       lines.push(`    提示：${h.message}`)
@@ -1876,8 +2233,9 @@ export function rulesBrief(): string {
     '- 例外：rebuttal（回复信）中 "the revised manuscript / as requested" 属正常表述',
     '',
     '## 二、主张校准（claim calibration）',
-    '- 不得使用 "we do not claim"、"本文并非要证明"、"这并不意味着" 等反复自我设限句式',
-    '- 自我削弱词（遗憾的是/仍明显落后/效果有限/存在严重不足）删除或改写',
+    '- "we do not claim"、"本文并非要证明"、"这并不意味着" 等反复自我设限句式：属 CANDIDATE——可能承担正当的 epistemic boundary（"We do not claim that this association is causal" 是负责任的边界声明），人工判定后再改，不要自动删除',
+    '- 自黑免责（完全基于假数据/模型毫无意义/结果完全不可靠/不足为凭）属 VIOLATION，必须改写',
+    '- 自我削弱词（遗憾的是/仍明显落后/效果有限）改写为精确的、受证据约束的描述；负面/零/矛盾结果是数据，不得删除',
     '- 边界声明集中写（方法定位 1 处 + 结论边界 1 处）；研究局限性在 Discussion 正当陈述（ICMJE 要求），但同一局限不要在多个章节重复',
     '',
     '## 三、修辞模式（rhetorical pattern）',
@@ -1906,6 +2264,15 @@ export function rulesBrief(): string {
     '- 强主张（prove/establish/confirm/guarantee）附近必须有证据锚点（数字/统计量/图表引用），否则弱化',
     '- 作者风格：用 writing_style_profile 学习作者历史论文，新稿件句长分布偏离时向作者靠拢',
     '- LaTeX 中 Unicode 下标/希腊字母（₁ α）改用数学模式',
+    '',
+    '## 六·v0.8 科学完整性锁（Epistemic Lock：主张/否定/scope 守恒）',
+    '- 定位：语言润色不得改变 science——无论往强还是往弱。数字/引用没变 ≠ 没改坏（"associated → caused" 数字没动但结论已变）',
+    '- 主张强度阶梯（Yila claim-strength ladder，adapted）：consistent with/may suggest(0) < associated with(1) < predicts(2) < contributes to(3) < affects/leads to(4) < causes/demonstrates(5)。修改不得静默沿阶梯移动',
+    '- 否定守恒："No significant association" → "A significant association" 会翻转负/零结果；no/not/did not/without/non-significant 标记删除按 HIGH 报',
+    '- 零结果守恒：no significant difference / did not improve / remained unchanged 是数据，不得因削弱叙事而删除',
+    '- scope 边界：in this study / under these conditions / 在本研究中… 消失时提示"可能被泛化"——不自动判错，只要求核验',
+    '- 自动守护：DSH 环境中插件自动捕获 write/edit 前的文本，写入后自动跑 Scholarship + Epistemic Lock（自动路径与手动 writing_audit(original=) 同规则）',
+    '- 命中性质（findingKind）：INVARIANT（不变量，改即事故）/ VIOLATION（明确违规）/ CANDIDATE（防御性候选——cue ≠ verdict，可能承担正当边界，勿自动删除）/ ADVISORY（文体建议）',
     '',
     '## 七、v0.7 局限性与学术自信（ko5.6sol 借鉴）',
     '- 自黑免责零容忍：不得出现"完全基于假数据/模型毫无意义/结果完全不可靠/不足为凭"等自我打压套话（AI 安全护栏误触发的过度防御）',

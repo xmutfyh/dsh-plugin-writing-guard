@@ -4,7 +4,7 @@
  * 目标：每条核心规则至少有一个 true-positive 和一个 true-negative 断言。
  * 运行：node tests/run-tests.mjs
  */
-import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, splitSentences, cosineSimilarity, tokenizeForSimilarity } from '../lib/rules.js'
+import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport } from '../lib/rules.js'
 import { isPaperFile } from '../lib/index.js'
 
 let pass = 0
@@ -865,6 +865,79 @@ console.log('=== 50. v0.7 词表并入（ko5.6sol 过渡词，密度门控不变
     { profile: 'manuscript' },
   )
   check('cn-ai-connectives TP (进一步/由此可见 merged)', hasRule(zh, 'cn-ai-connectives'), JSON.stringify(zh.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 51. v0.8 Epistemic Lock：主张强度漂移（mutation benchmark）===')
+{
+  // 单元：ladder 提取
+  const m1 = extractEpistemicMarkers('X was associated with Y.')
+  check('claim ladder: associated → level 1', m1.claimLevel === 1, `level=${m1.claimLevel}`)
+  const m2 = extractEpistemicMarkers('X caused Y.')
+  check('claim ladder: caused → level 5', m2.claimLevel === 5, `level=${m2.claimLevel}`)
+  const m3 = extractEpistemicMarkers('X was associated with reduced mortality.')
+  check('claim ladder: associated-with-descriptor stays level 1', m3.claimLevel === 1, `level=${m3.claimLevel}`)
+  const m4 = extractEpistemicMarkers('No significant association was observed.')
+  check('negation/null markers extracted', m4.negation && m4.nullResult)
+
+  // 数字没动、结论变了：associated → caused
+  const up = auditText('The intervention caused lower mortality.', { profile: 'manuscript', original: 'The intervention was associated with lower mortality.' })
+  check('claim-drift TP (association→causation)', hasRule(up, 'claim-drift'), JSON.stringify(up.hits.map((h) => h.snippet)))
+  check('claim-drift findingKind=invariant', up.hits.find((h) => h.ruleId === 'claim-drift')?.findingKind === 'invariant')
+
+  // 变弱同样是科学变化（polishing 不得改变 science，无论方向）
+  const down = auditText('The intervention may be associated with lower mortality.', { profile: 'manuscript', original: 'The intervention reduced mortality.' })
+  check('claim-drift TP (downward weakening)', hasRule(down, 'claim-drift'), JSON.stringify(down.hits.map((h) => h.snippet)))
+
+  // TN：同层润色（描述性分词互换不升级）
+  const same = auditText('The intervention was associated with reduced mortality.', { profile: 'manuscript', original: 'The intervention was associated with lower mortality.' })
+  check('claim-drift TN (same level, descriptor swap)', !hasRule(same, 'claim-drift'), JSON.stringify(same.hits.map((h) => h.ruleId)))
+
+  // 句对齐工具
+  const pairs = alignSentences(['Alpha beta gamma delta.'], ['Alpha beta gamma delta and more.'])
+  check('alignSentences finds pair', pairs.length === 1 && pairs[0].sim > 0.5, JSON.stringify(pairs))
+}
+
+console.log('=== 52. v0.8 否定 / 零结果 / scope 守恒 ===')
+{
+  const neg = auditText('A significant association was observed between the variables.', { profile: 'manuscript', original: 'No significant association was observed between the variables.' })
+  check('negation-drift TP (negation removed)', hasRule(neg, 'negation-drift'), JSON.stringify(neg.hits.map((h) => h.snippet)))
+
+  const nullR = auditText('The treatment improved recovery rates in the cohort.', { profile: 'manuscript', original: 'The treatment did not improve recovery rates in the cohort.' })
+  check('negation-drift TP (null result removed)', hasRule(nullR, 'negation-drift'), JSON.stringify(nullR.hits.map((h) => h.ruleId)))
+
+  const scope = auditText('The effect was small.', { profile: 'manuscript', original: 'Among participants in this study, the effect was small.' })
+  check('scope-drift TP (scope boundary removed)', hasRule(scope, 'scope-drift'), JSON.stringify(scope.hits.map((h) => h.snippet)))
+
+  const keep = auditText('Among participants in this study, the effect was small and consistent.', { profile: 'manuscript', original: 'Among participants in this study, the effect was small.' })
+  check('scope-drift TN (scope preserved)', !hasRule(keep, 'scope-drift'), JSON.stringify(keep.hits.map((h) => h.ruleId)))
+
+  // 中文 scope 标记
+  const zhScope = auditText('盐析速率显著降低。', { profile: 'manuscript', original: '在本实验中，盐析速率显著降低。' })
+  check('scope-drift TP (zh scope removed)', hasRule(zhScope, 'scope-drift'), JSON.stringify(zhScope.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 53. v0.8 findingKind 分类 + 科学完整性回归报告 ===')
+{
+  const r = auditText(
+    'The revised model uses the ΔP objective. We do not claim that the association is causal. 本研究完全基于假数据。',
+    { profile: 'manuscript' },
+  )
+  const kindOf = (id) => r.hits.find((h) => h.ruleId === id)?.findingKind
+  check('revised-family → violation', kindOf('revised-family') === 'violation', JSON.stringify(r.hits.map((h) => [h.ruleId, h.findingKind])))
+  check('we-do-not-claim → candidate', kindOf('we-do-not-claim') === 'candidate')
+  check('cn-self-defeating → violation', kindOf('cn-self-defeating') === 'violation')
+
+  const inv = auditText('The intervention caused lower mortality.', { profile: 'manuscript', original: 'The intervention was associated with lower mortality.' })
+  check('claim-drift → invariant', inv.hits.find((h) => h.ruleId === 'claim-drift')?.findingKind === 'invariant')
+
+  // 完整性回归摘要 + 报告块（0 命中也显示）
+  const int = auditText('The accuracy improved to 92.1%.', { profile: 'manuscript', original: 'The accuracy improved to 89.1%.' })
+  check('integrity.numericChanged > 0', (int.integrity?.numericChanged ?? 0) > 0, JSON.stringify(int.integrity))
+  const txt = formatReport(int)
+  check('formatReport shows integrity regression block', txt.includes('科学完整性回归'), txt.slice(0, 400))
+
+  const ok = auditText('The accuracy improved to 89.1%.', { profile: 'manuscript', original: 'The accuracy improved to 89.1%.' })
+  check('integrity all-preserved (0 drift, 0 hits)', (ok.integrity?.numericChanged ?? 99) === 0 && ok.summary.total === 0, JSON.stringify(ok.integrity))
 }
 
 console.log('')

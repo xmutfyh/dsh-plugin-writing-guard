@@ -4,6 +4,53 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-16
+
+### Added — Epistemic Lock & findingKind（manuscript integrity guard 升级）
+
+Position upgrade: from "AI-style linter + Scholarship Lock" to a **deterministic manuscript
+integrity guard** — protecting scientific facts AND epistemic integrity (claim strength, negation,
+null findings, scope) during AI-assisted revision. All still local regex/statistics, zero network,
+zero LLM.
+
+- **Automatic Scholarship Lock (P0 fix)**: auto-audit now captures the pre-edit file content via a
+  `tools/pre-execute` hook (confirmed harness signature `(exec, next) => PreToolDecision`) and
+  passes it as `original`, so every paper write/edit is diffed against the previous version —
+  Scholarship Lock is no longer manual-only. A persisted baseline cache (state file v2, capped at
+  20 files / 512KB each / 4MB total) backs up host restarts and first-edit misses.
+- **Epistemic Lock 🔴** (`original` 对比时启用):
+  - `claim-drift` — Yila claim-strength ladder (consistent with/may suggest(0) < associated(1) <
+    predicts(2) < contributes(3) < affects/leads to(4) < causes/demonstrates(5), adapted, see
+    THIRD_PARTY.md). "was associated with" → "caused" is HIGH invariant even when no number
+    changed; downward weakening is flagged too (polishing must not change science in either
+    direction). Descriptor participles ("associated with reduced mortality") stay capped at the
+    association level.
+  - `negation-drift` — negation markers removed (no/not/did not/without…) = possible flipped
+    negative finding (HIGH); negation added (MEDIUM); null-result phrasing removed (no significant
+    difference / did not improve) is a data loss (HIGH, Evidence-Bound principle).
+  - `scope-drift` — scope markers (in this study / under these conditions / 在本研究中…) vanishing
+    from an aligned sentence → "verify the claim was not generalized" (MEDIUM, never auto-judged).
+- **`findingKind` data model**: every hit carries a kind — `invariant` (science changed),
+  `violation` (clear discipline breach), `candidate` (defensive wording that may carry a
+  legitimate claim boundary — never auto-delete, human triage), `advisory` (pure style). Report and
+  auto-inject show the kind tag; defensive rules got cue ≠ verdict notes.
+- **`we-believe` suggestion fixed** (no longer pushes "the results show" blindly — that can silently
+  upgrade author interpretation into an evidence claim); **`self-deprecation` suggestion fixed**
+  (precise evidence-bounded description; negative/null/contradictory findings are data, never
+  removed for narrative).
+- **Revision Integrity report**: `formatReport` shows a Scholarship + Epistemic regression block
+  (✓/✗ numeric, citations, claim strength, negation, scope) whenever `original` is provided —
+  including the all-clear case.
+- **Mutation benchmark tests**: dedicated v0.8 sections — ladder extraction units, association→
+  causation, downward weakening, negation removal, null-result removal, scope removal (en+zh),
+  descriptor TN, findingKind classification, integrity summary. 149 → 170 assertions.
+- **`THIRD_PARTY.md`**: attribution for Yila-AI/sci-ssci-skills (Apache-2.0 ladder/invariant,
+  required), Evidence-Bound (MIT), ko5.6sol (MIT); ARS / journal-adapt noted as references.
+
+### Changed
+
+- State file schema v2 (`baselines`); fingerprint version unchanged (fingerprint semantics intact).
+
 ## [0.7.0] - 2026-08-16
 
 ### Added — ko5.6sol-informed style rules (anti-mechanical-phrasing)

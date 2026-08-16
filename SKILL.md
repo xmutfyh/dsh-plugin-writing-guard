@@ -2,9 +2,12 @@
 name: writing-guard
 description: >-
   Academic-writing discipline guard (deterministic, zero-network): rewrite/refactor manuscript
-  prose to remove AI mechanical phrasing and defensive disclaimers while protecting research facts.
+  prose to remove AI mechanical phrasing and defensive disclaimers while protecting research facts
+  and epistemic integrity (numbers, citations, claim strength, negation, scope must not be silently
+  changed by language polishing).
   论文写作纪律守则（本地规则，零网络）：去 AI 机械感（多重"的"字链、套路过渡词、空洞热词、超长句）、
-  清除自黑式免责套话（"基于假数据/模型毫无意义"）、保护科研事实（数字/引用/图表编号不改动）。
+  清除自黑式免责套话（"基于假数据/模型毫无意义"）、保护科研事实与科学主张完整性
+  （数字/引用/主张强度/否定/scope 不许被语言修改悄悄改变——Scholarship Lock + Epistemic Lock）。
   Use when writing, polishing, or refactoring academic papers (LaTeX/Markdown, Chinese/English)
   to achieve publication-ready tone without changing scientific facts.
 ---
@@ -84,13 +87,39 @@ description: >-
 - 纪律边界（ESR）：不得为了"学术自信"删除真实的证据缺口、失效模式、条件限制——
   局限是证据透明度的一部分，只改措辞不改事实。
 
-## 7. 发布原则与提交前自查
+## 7. 科学完整性锁（v0.8，Epistemic Lock——Scholarship Lock 2.0）
+
+> 数字没变 ≠ 没改坏。语言润色不得改变 science——无论往强还是往弱。
+
+- **主张强度阶梯**（改编自 Yila-AI/sci-ssci-skills，Apache-2.0，见 THIRD_PARTY.md）：
+  `consistent with / may suggest`(0) < `is associated with`(1) < `predicts`(2) < `contributes to`(3)
+  < `affects / leads to / reduces`(4) < `causes / demonstrates / proves`(5)。
+  润色不得静默沿阶梯移动："was associated with" → "caused" 即使数字没变也是科学内容变化；
+  "reduced" → "may be associated with" 同样改变结论。恢复原强度，除非作者显式授权。
+  例外：`was associated with reduced mortality` 里的 reduced/increased/improved 是形容词修饰，
+  不升级主张强度（仍为关联层）。
+- **否定守恒**：`No significant association` → `A significant association` 会翻转阴性/零结果。
+  no / not / did not / without / non-significant 标记被删除即 HIGH；凭空引入否定也需核对。
+- **零结果守恒**：`did not improve` / `no significant difference` / `remained unchanged` 是数据——
+  不得因削弱叙事而删除（负面、零、矛盾结果是 Evidence-Bound 的 KEEP 类）。
+- **scope 边界**：`in this study` / `under these conditions` / `在本研究中` / `内部验证` 等标记
+  从同一句中消失 → 核验主张是否被泛化（不自动判错）。
+- **命中性质（findingKind）**：
+  - `INVARIANT`（🔴 科学不变量被改动：数字/引用/主张强度/否定/scope）——立即处理；
+  - `VIOLATION`（明确违规：修改过程残留、自黑免责）——应当修正；
+  - `CANDIDATE`（防御性候选：we do not claim / stacked hedge…）——cue ≠ verdict：
+    可能承担正当的 claim 边界（scope/证据状态/因果边界/竞争解释），处置为
+    KEEP / TIGHTEN / REFRAME / RELOCATE / CUT / QUERY，不确定就 QUERY，不要自动删除；
+  - `ADVISORY`（纯文体：长句/密度/格式）——可保留并说明理由。
+
+## 8. 发布原则与提交前自查
 
 - 只围绕优势组织论文；不写工作汇报、不主动示弱、不替审稿人攻击自己；
   打不过的维度不设为比赛项目；优势必须明确说出来。
 - 润色/改写后自查：① 数字、百分数、p 值、置信区间、\cite/\ref、Figure/Table 编号、DOI
-  是否被改动（语言润色不得改变科研事实——Scholarship Lock）；② 高危项清零、中危 ≤3 处；
-  ③ 若在 DSH 环境，用 `writing_audit`（可传 original=改前原文）复核；④ 用
+  是否被改动（语言润色不得改变科研事实——Scholarship Lock）；② 主张强度是否沿阶梯漂移、
+  否定/零结果是否被翻转、scope 边界是否消失（Epistemic Lock）；③ 高危项清零、中危 ≤3 处；
+  ④ 若在 DSH 环境，用 `writing_audit`（自动路径已带修改前基线）复核；⑤ 用
   `writing_style_profile` 学习作者历史风格，句长分布向作者靠拢。
 
 ---
