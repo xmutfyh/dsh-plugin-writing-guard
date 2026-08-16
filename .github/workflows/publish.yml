@@ -3,12 +3,19 @@ name: Publish to npm
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # 允许 npm 发布 provenance（SLSA）——pnpm 11 在 GitHub Actions 中默认启用 OIDC
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       # 版本统一从 package.json 的 packageManager 字段读取，不显式传 version
@@ -21,7 +28,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
-      # 发布 npm 包；版本号取自 package.json（由 v* tag 触发）
+      # 发布 npm 包；版本号取自 package.json（tag 触发时由 v* tag 对齐，
+      # workflow_dispatch 手动触发时发布当前分支 package.json 的版本）
       - run: pnpm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
