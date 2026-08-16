@@ -1007,6 +1007,24 @@ console.log('=== 56. v0.9 基线 UTF-8 字节核算 + 淘汰 ===')
   check('pruneBaselines evicts oldest first', !many.has('f0.md') && many.has('f24.md'))
 }
 
+console.log('=== 57. v0.9.1 establish+基建名词（建立≠证明）上下文排除 ===')
+{
+  // 实测发现：pore-scale 论文 "a baseline (M1) is established without images" 误报——
+  // "establish a baseline/protocol/framework" 是"建立"，不是"证明"
+  const baseline = auditText(
+    'First, a temperature--flow-rate--progress baseline (M1) is established without images. Second, a causal image-only baseline (M2) is used.',
+    { profile: 'manuscript' },
+  )
+  check('claim-evidence-proximity TN (establish a baseline)', !hasRule(baseline, 'claim-evidence-proximity'), JSON.stringify(baseline.hits.map((h) => h.snippet)))
+
+  const protocol = auditText('A standardized measurement protocol was established for all experiments.', { profile: 'manuscript' })
+  check('claim-evidence-proximity TN (establish a protocol)', !hasRule(protocol, 'claim-evidence-proximity'), JSON.stringify(protocol.hits.map((h) => h.ruleId)))
+
+  // 真正的强主张仍然报警："It is well established that" 是证明性主张
+  const strong = auditText('It is well established that X causes Y.', { profile: 'manuscript' })
+  check('claim-evidence-proximity TP (well established claim)', hasRule(strong, 'claim-evidence-proximity'), JSON.stringify(strong.hits.map((h) => h.snippet)))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

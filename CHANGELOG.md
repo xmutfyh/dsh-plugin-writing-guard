@@ -4,6 +4,21 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-08-16
+
+### Fixed
+
+- **claim-evidence-proximity false positive (real-paper test)**: auditing
+  `pore_scale_revised_model_marked_v2.docx` revealed that "a baseline (M1) is established" was
+  flagged — `establish` + infrastructure nouns (baseline/protocol/framework/system/dataset/
+  benchmark/procedure/workflow/pipeline/registry/criteria/standards) means "to set up", not "to
+  prove". The context exclusion now suppresses those collocations while "It is well established
+  that…" (a genuine strong claim) still fires.
+
+### Tests
+
+- 183 → 186: establish-a-baseline TN, establish-a-protocol TN, well-established-claim TP.
+
 ## [0.9.0] - 2026-08-16
 
 ### Added — two-axis epistemic model & clause-level multi-claim drift

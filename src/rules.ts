@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '0.9.0'
+export const PLUGIN_VERSION = '0.9.1'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -1270,9 +1270,11 @@ const RULES: Rule[] = [
     label: '强主张附近缺少证据锚点',
     pattern: /\b(prove[sd]?|proven|established?|confirmed?|guarantee[sd]?|definitively|unequivocally|unambiguously|conclusively|we prove|we establish)\b/gi,
     // v0.6：附近 ±120 字符无证据锚点（数字/%/p 值/CI/图表引用/citation）才提示
+    // v0.9.1：establish + 基建类名词（baseline/protocol/framework…）是"建立"不是"证明"——
+    // 实测 "a baseline (M1) is established"（建立基线）误报，加入上下文排除
     context: {
       window: 120,
-      exclude: /\b\d+(?:\.\d+)?\s*%?|p\s*[<≤=]\s*0?\.?\d|\bCI\b|confidence interval|95%|Table\s*\d|Figure\s*\d|\\cite|\[\d+\]/i,
+      exclude: /\b\d+(?:\.\d+)?\s*%?|p\s*[<≤=]\s*0?\.?\d|\bCI\b|confidence interval|95%|Table\s*\d|Figure\s*\d|\\cite|\[\d+\]|\b(?:baselines?|protocols?|frameworks?|systems?|datasets?|benchmarks?|procedures?|workflows?|pipelines?|registries?|criteria|standards?)\b.{0,40}\bestablish(?:ed|ing)?\b|\bestablish(?:ed|ing)?\b.{0,40}\b(?:baselines?|protocols?|frameworks?|systems?|datasets?|benchmarks?|procedures?|workflows?|pipelines?)\b/i,
     },
     message: '检测到强主张动词（prove/establish/confirm/guarantee…），但附近 ±120 字符没有证据锚点（数字/百分数/p 值/置信区间/图表引用）。',
     suggestion: '不是说主张错误：请在强主张附近补充具体证据（数字、统计量或引用）；若确无证据支撑，弱化为证据导向表述。',
