@@ -101,9 +101,9 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 |---|---|
 | 修改过程残留 | "revised model"、"as requested"、"we have updated"、"本轮/投稿前/审稿人要求" |
 | 主张校准 | "we do not claim"、"本文并非要证明"、自我削弱词；研究局限性正当陈述不报警（ICMJE 要求） |
-| 修辞模式 | "不是X而是Y"/"not X but Y"、rather than 滥用、绝对化定义、三连排比、重复绕圈 |
-| LLM 关联词 | delve/tapestry/testament/leverage/harness 等（密度规则，单次出现不报警） |
-| 学术文体 | we believe/think、模糊词、抽象副词；"significantly" 仅提示复核统计语境 |
+| 修辞模式 | "不是X而是Y"/"not X but Y"、rather than 滥用、绝对化定义、三连排比、重复绕圈、多重"的"字链（v0.7） |
+| LLM 关联词 | delve/tapestry/testament/leverage/harness 等（密度规则，单次出现不报警）；空洞热词密度（v0.7：robust/crucial/机制/耦合/范式，高门槛防误伤术语） |
+| 学术文体 | we believe/think、模糊词、抽象副词；"significantly" 仅提示复核统计语境；平均句长（v0.7：英 ≤18 词/中 ≤25 字） |
 | 格式 | 破折号密度（范围连字符不算）、冒号标题、Unicode 数学符号（LaTeX 工作流） |
 
 ## v0.6 学术写作质量守卫
@@ -123,6 +123,22 @@ biomedical abstracts 词频统计；社区词表 delve/tapestry/testament/levera
 | **Unicode 数学符号** | LaTeX 正文中 ₁₂₃ ²³ α β × − 等字符 | 建议改用数学模式 |
 
 > 原则（来自 v0.6 设计评审）：不针对具体模型写规则（GPT-5.6 风格、Opus 风格之类——模型会变，行为模式不会）；有证据依据的 hedging 是正确的学术表达，本工具不是"反 hedge 工具"。
+
+## v0.7 机械感与自黑免责（ko5.6sol 借鉴）
+
+借鉴社区技能 `handsomeZR-netizen/ko5.6sol`（KO GPT-5.6 SOL 机械措辞与防御性声明），在保留
+"密度门控 + 领域安全"设计的前提下新增：
+
+| 能力 | 检测什么 | 例子 |
+|---|---|---|
+| **多重"的"字链** | 中文连续 ≥3 个"的"的修饰嵌套 | `基于X的Y的Z的机制` → 拆成 2–3 个短句 |
+| **平均句长** | 全文均值超参考目标（英 >18 词 / 中 >25 字），按语言各报一次 | 与 overlong-sentence 互补：抓整体均值而非单句极端 |
+| **自黑免责套话** 🔴 | "完全基于假数据/模型毫无意义/结果完全不可靠/不足为凭" | 改写为客观边界 + 未来方向；诚实 limitations 与模拟数据表述不误伤 |
+| **空洞热词密度** | 英 robust/crucial/exhibits/tailored/interplay/imperative（≥5 且 ≥1.0/千词）；中 机制/支撑/动态/耦合/范式（≥10 且 ≥3.0/千字） | 术语用法（robust regression、"耦合机理"）保留，高门槛防误伤 |
+| **词表并入** | EN 过渡词 + consequently/thus/hence/accordingly/notably…；中文套话 + 进一步/由此可见/鉴于/毫无疑问… | 密度门槛不变（≥8 次），正常使用不受影响 |
+| **writing_rules 新增章节** | 「局限性与学术自信」：自黑改写公式 + 主张动词校准表（modelled ≠ observed；suggested < demonstrated）+ ESR 纪律边界 | 只改措辞不改事实 |
+
+另：仓库根新增 `SKILL.md`——规则集的独立静态导出，供没有 DSH 的环境（Codex/Claude Code/Antigravity）直接使用同一套纪律。
 
 ## 密度阈值（v0.3.3）
 
@@ -250,7 +266,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 134 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案回归）
+npm test   # 自动先 build 再跑 149 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性/Scholarship Lock/风格档案回归）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

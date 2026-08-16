@@ -783,6 +783,90 @@ console.log('=== 45. v0.6 工具函数：句子切分 / 相似度 / profile ==='
   check('diffScholarship reports duplicate citation removal', dupRemoved.removed.some((r) => r.type === 'cite' && r.value === '\\cite{a}'), JSON.stringify(dupRemoved.removed))
 }
 
+console.log('=== 46. v0.7 中文"的"字修饰链（ko5.6sol 借鉴）===')
+{
+  const tp = auditText(
+    '这种基于渗透率模型的预测结果的误差来源的解析，需要结合实验条件进一步分析。',
+    { profile: 'manuscript' },
+  )
+  check('cn-modifier-chain TP (3-layer 的-chain)', hasRule(tp, 'cn-modifier-chain'), JSON.stringify(tp.hits.map((h) => h.snippet)))
+
+  const tn = auditText('该方法的预测结果是可靠的，误差在可接受范围内。', { profile: 'manuscript' })
+  check('cn-modifier-chain TN (2-layer only)', !hasRule(tn, 'cn-modifier-chain'), JSON.stringify(tn.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 47. v0.7 平均句长（英 ≤18 词 / 中 ≤25 字）===')
+{
+  const longEn = auditText(
+    'The proposed workflow restricts the analysis to the validated subset of measurements obtained under fully controlled experimental conditions with constant temperature. ' +
+    'Furthermore, the resulting predictions are systematically compared against the reference dataset using rigorous error metrics and statistical tests. ' +
+    'We observe that the additional complexity introduced by the higher-order correction terms does not translate into measurable improvements.',
+    { profile: 'manuscript' },
+  )
+  check('avg-sentence-length TP (en avg > 18 words)', hasRule(longEn, 'avg-sentence-length'), JSON.stringify(longEn.hits.map((h) => h.snippet)))
+
+  const shortEn = auditText('The method works well. We tested three cases. The results agree. Errors are small.', { profile: 'manuscript' })
+  check('avg-sentence-length TN (en short)', !hasRule(shortEn, 'avg-sentence-length'), JSON.stringify(shortEn.hits.map((h) => h.ruleId)))
+
+  const longZh = auditText(
+    '该方法基于多孔介质中的盐析机理建立预测模型，并通过微流控实验验证其在不同注入条件下的适用性与可靠性。该框架结合图像分割与物理约束，对裂缝网络中的沉积分布进行逐帧定量表征。实验结果表明，该模型在低流量工况下的预测误差显著小于传统经验公式给出的估计。',
+    { profile: 'manuscript' },
+  )
+  check('avg-sentence-length TP (zh avg > 25 chars)', hasRule(longZh, 'avg-sentence-length'), JSON.stringify(longZh.hits.map((h) => h.snippet)))
+}
+
+console.log('=== 48. v0.7 自黑式免责套话 ===')
+{
+  const tp = auditText(
+    '本研究完全基于假数据，该模型毫无意义，结果完全不可靠，不足为凭。',
+    { profile: 'manuscript' },
+  )
+  check('cn-self-defeating TP (假数据/毫无意义/不足为凭)', hasRule(tp, 'cn-self-defeating'), JSON.stringify(tp.hits.map((h) => h.snippet)))
+
+  // TN：模拟数据是正当表述；诚实 limitations（"不完全可靠"）不报警
+  const ok = auditText(
+    '本研究基于模拟数据开展敏感性分析；由于样本量有限，结果可能不完全可靠，仍需进一步验证。',
+    { profile: 'manuscript' },
+  )
+  check('cn-self-defeating TN (simulated data / honest limitation)', !hasRule(ok, 'cn-self-defeating'), JSON.stringify(ok.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 49. v0.7 空洞热词密度（密度门控，术语不误伤）===')
+{
+  const en = auditText(
+    'The robust method is crucial for the robust performance. Our robust framework exhibits robust behavior, and a tailored approach is imperative. The robust results substantially improve the robust baseline.',
+    { profile: 'manuscript' },
+  )
+  check('llm-buzzword-en TP (5+ robust-family)', hasRule(en, 'llm-buzzword-en'), JSON.stringify(en.hits.map((h) => h.snippet)))
+
+  const enSparse = auditText('The robust regression was fitted to the data. Robustness analysis confirmed stability.', { profile: 'manuscript' })
+  check('llm-buzzword-en TN (term usage, low count)', !hasRule(enSparse, 'llm-buzzword-en'), JSON.stringify(enSparse.hits.map((h) => h.ruleId)))
+
+  const zh = auditText(
+    '该机制的动态演化与耦合协同范式，支撑了多维度的精细化解耦与稳健的拓扑重构。机制、耦合与动态的协同，是范式升级的维度支撑；拓扑与解耦的全流程，需要精细化机制协同。',
+    { profile: 'manuscript' },
+  )
+  check('cn-buzzword-density TP (10+ abstract nouns)', hasRule(zh, 'cn-buzzword-density'), JSON.stringify(zh.hits.map((h) => h.snippet)))
+
+  const zhSparse = auditText('该耦合机制对裂缝中的动态盐析过程具有支撑作用。', { profile: 'manuscript' })
+  check('cn-buzzword-density TN (domain terms, low count)', !hasRule(zhSparse, 'cn-buzzword-density'), JSON.stringify(zhSparse.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 50. v0.7 词表并入（ko5.6sol 过渡词，密度门控不变）===')
+{
+  const en = auditText(
+    'Consequently, the results differ. Thus, we conclude that the effect persists. Hence, the model fails on this subset. Additionally, more data is needed. Moreover, we repeated the runs. Therefore, the outcome changed. Accordingly, we updated the protocol. To this end, we revised the code. Notably, the trend remains stable.',
+    { profile: 'manuscript' },
+  )
+  check('llm-transition-overuse TP (consequently/thus/hence merged)', hasRule(en, 'llm-transition-overuse'), JSON.stringify(en.hits.map((h) => h.snippet)))
+
+  const zh = auditText(
+    '由此可见，进一步的研究表明，毫无疑问，该方法的优势是显著的。特别地，有鉴于此，也就是说，我们需要重新审视这一问题。综上所述，与此同时，基于此，我们提出了新的框架。',
+    { profile: 'manuscript' },
+  )
+  check('cn-ai-connectives TP (进一步/由此可见 merged)', hasRule(zh, 'cn-ai-connectives'), JSON.stringify(zh.hits.map((h) => h.snippet)))
+}
+
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {

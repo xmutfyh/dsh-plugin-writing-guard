@@ -4,6 +4,42 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-16
+
+### Added — ko5.6sol-informed style rules (anti-mechanical-phrasing)
+
+Borrowed from the community skill `handsomeZR-netizen/ko5.6sol` (anti-GPT-5.6-SOL mechanical
+phrasing & defensive disclaimers), while keeping the plugin's density-gated, domain-safe design:
+
+- **`cn-modifier-chain`** (rhetorical_pattern, medium): ≥3 consecutive "的"-joined modifier
+  segments in a clause (「基于X的Y的Z的机制」). Two-layer chains (「该方法的预测结果」) are not flagged.
+- **`avg-sentence-length`** (academic_style, low): full-document mean sentence length over the
+  ko5.6sol targets — English >18 words, Chinese >25 chars — reported per language (≥3 sentences
+  each). Complements `overlong-sentence-*` (single-sentence extremes vs overall mean).
+- **`cn-self-defeating`** (claim_calibration, high): self-defeating disclaimers that destroy a
+  paper's value (完全基于假数据 / 模型毫无意义 / 结果完全不可靠 / 不足为凭…). Honest limitations
+  (样本量有限, 结果可能不完全可靠) and legitimate simulated-data statements are NOT flagged.
+- **`llm-buzzword-en`** (llm_associated, low): density rule for common-but-AI-flavored adjectives
+  (robust/crucial/substantially/exhibits/tailored/interplay/imperative, ≥5 & ≥1.0/1k words).
+  Term usages (robust regression) are explicitly exempted.
+- **`cn-buzzword-density`** (llm_associated, low): high-bar density rule for abstract nouns
+  (机制/支撑/动态/稳健/范式/拓扑/耦合/协同/维度/全流程/精细化/解耦, ≥10 & ≥3.0/1k chars) so domain
+  terminology (耦合机理 in geoscience manuscripts) is not false-positived.
+- **Word-list merges** (density gates unchanged): EN transition list gains consequently/thus/hence/
+  accordingly/thereby/to this end/notably/importantly/specifically/this matters/this motivates;
+  CN connective list gains 进一步/由此可见/鉴于/毫无疑问/特别地/有鉴于此/也就是说.
+- **`writing_rules` brief** gains a new section「局限性与学术自信」: self-defeating zero-tolerance,
+  limitation rewrite formula (objective boundary + future direction), a claim-verb calibration
+  table (modelled/simulated ≠ observed/measured; suggested/indicated < demonstrated/established),
+  and the ESR discipline boundary (never delete real evidence gaps for "confidence").
+- **`SKILL.md`** (repo root): standalone static skill export of the discipline guide for agents
+  running outside DSH (Codex / Claude Code / Antigravity), mirroring the ko5.6sol distribution shape.
+
+### Tests
+
+- 136 → 149 assertions: TP/TN for the 的-chain, average sentence length (en/zh), self-defeating
+  disclaimers, buzzword densities (en/zh, incl. domain-term TN), and merged word lists.
+
 ## [0.6.1] - 2026-08-16
 
 ### Fixed
