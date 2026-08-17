@@ -3,140 +3,127 @@
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
-> **A deterministic manuscript integrity guard for AI-assisted academic revision.**
-> It detects when language polishing silently changes the science — numbers, citations,
-> claim strength (causal & evidential force), negation/null findings, scope boundaries — and flags
-> mechanical AI writing while protecting your authorial style. Local regex/statistics only:
-> zero network, zero LLM.
->
-> DeepSeek Harness (DSH) 论文写作守卫：在论文撰写和修改过程中自动检查常见 AI 写作风格、
-> 修改残留、防御性表达与机械化句式，并在润色时保护科研事实与科学主张完整性
-> （Scholarship Lock + Epistemic Lock）。
+**Less AI. More Evidence. Better Journal Fit.**
 
-**Works with: Chinese papers, English papers, SCI manuscripts, theses, academic writing and polishing.**
+Writing Guard is a research-paper writing guard for DeepSeek Harness:
+it reduces mechanical, templated and defensive AI writing,
+protects research facts and scientific commitments during AI-assisted revision,
+and calibrates a manuscript's writing distributions against representative target-journal papers.
 
----
-
-## One-line positioning
-
-**Writing Guard helps researchers remove AI-style writing, preserve scientific evidence, and write for their target journal.**
-
-> Less AI. More Evidence. Better Journal Fit.
->
 > **Language can change. Evidence cannot.**
 
-We are not an "AI detector bypass" tool:
-
-> **We don't hide AI use. We remove bad AI writing.**
-
-## Three pillars
-
-1. **Remove AI-style / defensive writing**
-   Not just swapping a few "AI buzzwords". Detect `concession stacking`, `limitation pre-emption`, `generic value claim`, and `unnecessary epistemic retreat` — the “correct but unnecessary” sentences that make academic prose read like defensive AI writing.
-   > Stronger AI models increasingly write “correct but unnecessary” sentences.
-
-2. **Protect the evidence**
-   Numbers don't drift. p-values don't change. Null findings don't disappear. Correlation doesn't become causation. Citation claims must match evidence. Scope is not silently generalized.
-
-3. **Write for your target journal**
-   Not “write like a paper” — **write like the journal you are targeting**. Distill writing distributions from representative target-journal papers and get a Journal Fit report for Nature Communications, IEEE TMI, Applied Energy, Journal of Cleaner Production, and more.
-
-### Before / After at a glance
-
-**Before (typical defensive AI writing)**
-
-```text
-While these findings are promising, they should be interpreted
-with caution. Several limitations must also be acknowledged.
-Nevertheless, the results provide potentially valuable insights...
-```
-
-**Writing Guard detects**
-
-```text
-⚠ Defensive-writing cluster
-- concession stacking
-- limitation pre-emption
-- generic value claim
-- unnecessary epistemic retreat
-```
-
-**After (more like a real researcher)**
-
-```text
-The model improved F1 by 4.2% over the strongest baseline.
-Performance decreased on the external cohort, indicating
-limited cross-domain generalization.
-```
-
-### Output structure: STYLE / EVIDENCE / JOURNAL
-
-Product output is grouped into three layers, so users immediately know which problem a finding belongs to:
-
-| Category | Question it answers |
-|---|---|
-| **STYLE** | Is this sentence too AI-sounding? |
-| **EVIDENCE** | Did this sentence change the science? |
-| **JOURNAL** | Is this sentence right for the journal I am targeting? |
-
-### Demos
-
-![Defensive AI Writing](assets/demos/defensive-writing.svg)
-
-![Evidence Drift](assets/demos/evidence-drift.svg)
-
-![Journal Fit](assets/demos/journal-fit.svg)
+**Local · Deterministic · Zero Network · Zero LLM**
 
 ---
 
-The plugin is not a one-shot "humanizer" that rewrites your whole paper after it is done.
-Instead it works continuously:
+## Three pillars: STYLE / EVIDENCE / JOURNAL
 
-**rules before writing → guard while writing → audit after edits.**
+1. **Less AI / STYLE**
+   Detect and reduce mechanical, templated, over-defensive AI writing — revision residue, defensive writing, hollow buzzwords and structural tells. We do not hide AI use; we remove bad AI writing.
+   > Stronger AI models increasingly write “correct but unnecessary” sentences.
 
-It provides four native DSH tools:
+2. **More Evidence / EVIDENCE**
+   Numbers, p-values, citations and DOIs must not silently drift during polishing; null findings must not disappear; correlation must not become causation; scope and evidence status must not be silently changed. Language can change. Evidence cannot.
 
-- `writing_rules` — load the writing-discipline cheat sheet before writing
-- `writing_audit` — scan text for AI-style patterns, revision residue, defensive writing, LLM-overused expressions and structural tells; `original` arg enables **Scholarship Lock** (numbers/citations/Figure/Table/DOI conservation) + **Epistemic Lock** (claim-strength drift on causal & evidential axes, negation/null-result flips, scope-boundary removal), each hit tagged with its finding kind (INVARIANT / VIOLATION / CANDIDATE / ADVISORY); `styleProfile` adds author-style drift detection; `journalProfile` adds section-level **Journal Fit** against a target journal writing profile
-- `writing_style_profile` — learn an author's writing style from previous papers (sentence-length distribution, densities), zero LLM
-- `writing_journal_profile` — distill a target journal's writing profile from representative papers (section-level sentence/paragraph length, hedge/causal/evidential density, first-person/passive ratios, citation density), zero LLM
+3. **Better Journal Fit / JOURNAL**
+   Distill section-level writing distributions, scientific claim patterns and rhetorical moves from representative target-journal papers. It is not only about wording — it compares what each section typically says and in what order.
 
-and optionally auto-audits paper files (`.md` / `.tex` / `.txt`) after every `write` / `edit`
-(v0.5 incremental mode + v0.8 automatic before/after capture via `tools/pre-execute`, keyed by
-`exec.token` for concurrent edits), feeding only *new* high-risk issues back to the agent.
+## Quick Start
 
-> Positioning: not an "AI detector", not just a writing linter — a **deterministic manuscript
-> integrity guard**. It does not tell the model *how* to write; it independently checks, after the
-> model has touched the paper, that nothing scientific was changed and that mechanical patterns
-> were not introduced. All rules are local regex/statistics — zero network, zero LLM calls,
-> millisecond latency.
+```sh
+dsh plugin --profile web add dsh-plugin-writing-guard
+dsh web
+```
 
-## Why Writing Guard instead of a Humanizer?
+Published on npm. GitHub / local source installs are also supported — see [full install instructions](#full-install).
 
-| | Writing Guard | Humanizer | AI Detector |
-|---|---|---|---|
-| Rules before writing | ✅ | ❌ | ❌ |
-| Checks while writing | ✅ | usually ❌ | ❌ |
-| Auto-audits paper edits | ✅ | ❌ | ❌ |
-| Full-text rewrite | ❌ | ✅ | ❌ |
-| Explainable issue location | ✅ | partial | partial |
-| Revision residue detection | ✅ | not necessarily | ❌ |
-| Defensive writing detection | ✅ | not necessarily | ❌ |
-| Local rules (zero network / zero LLM) | ✅ | usually needs LLM | varies |
+---
 
-> Writing Guard is complementary to Humanizers, not a replacement.
-> Humanizer workflow: AI draft → rewrite → humanized version.
-> Writing Guard workflow: rules → writing → automatic audit → targeted revision.
->
-> **A humanizer fixes the text after it's written; Writing Guard guards it as you write.**
+## How it works
 
-## About "removing AI flavor"
+```text
+writing rules → Agent revision → automatic guard → targeted revision
+```
 
-In this project, "removing AI flavor" means identifying and reducing mechanical, templated,
-over-structured LLM writing style — the goal is better academic expression, not guaranteed
-evasion of any AI-detection system.
+Writing Guard is not a one-shot humanizer. It works continuously inside the DSH paper workflow:
 
-## Install
+- Load `writing_rules` before writing
+- Check while writing / editing with `writing_audit`
+- Compare before/after revisions to protect Scholarship / Epistemic invariants
+
+## STYLE — removing AI flavor
+
+Detects:
+
+- Revision residue: `revised`, `as requested`, `本轮`, `审稿人要求`
+- Defensive writing: concession stacking, limitation pre-emption, generic value claim, unnecessary epistemic retreat
+- Mechanical rhetoric: `not X but Y`, `rather than` overuse, rule of three, em-dash / colon abuse
+- LLM-associated words: `delve` / `tapestry` / `testament` / `leverage` (density-based, a single use is fine)
+- Chinese filler chains, average sentence-length anomalies, etc.
+
+Density thresholds are language-aware: English by word count, Chinese by CJK character count, with a double gate to avoid false positives on domain terms.
+
+## EVIDENCE — Scholarship + Epistemic Lock
+
+Writing Guard compares before/after AI revision and protects:
+
+- Numbers, percentages, p-values, confidence intervals, units
+- `\cite` / `\ref`, Figure/Table numbers, DOIs
+- Causal and evidential force: `associated with` must not silently become `caused`
+- Negation / null findings: `no significant difference` must not disappear or flip
+- Scope boundaries and evidence status: “observed / reported” must not become direct claims
+
+Each finding is tagged `INVARIANT / VIOLATION / CANDIDATE / ADVISORY` and an integrity regression report is produced.
+
+## JOURNAL — target-journal calibration
+
+Writing Guard builds a corpus-aware Journal Profile from multiple representative target-journal papers, each parsed independently.
+
+It currently compares five signal groups:
+
+- **Structure**: sentence length, paragraph length
+- **Voice**: passive voice, first-person usage
+- **Citations**: bibliographic citations, figure/table references
+- **Scientific claims**: claim density, causal/evidential strength, hedging, scope, null findings
+- **Rhetoric**: rhetorical move coverage, canonical order, section-bound transition fit
+
+Journal Fit is reported per section, together with corpus size and confidence.
+
+> **Scientific Integrity > Journal Fit**
+
+Journal Fit uses grouped weights: Structure 20% / Voice 10% / Citations 15% / Epistemics 35% / Rhetoric 20%.
+
+## Four DSH Tools
+
+| Tool | Purpose |
+|---|---|
+| `writing_rules` | Returns the writing-discipline cheat sheet before writing |
+| `writing_audit` | Main audit entry: checks STYLE issues, compares Scholarship / Epistemic invariants, and can load Style Profile / Journal Profile |
+| `writing_style_profile` | Learns an author's style from previous papers and returns JSON for audit |
+| `writing_journal_profile` | Distills a Journal Profile from target-journal papers and returns JSON for audit |
+
+## Document-aware auditing
+
+The same sentence can mean different things in different document types:
+
+| profile | meaning | e.g. `as requested by the reviewer` |
+|---|---|---|
+| `manuscript` | paper body | 🔴 revision residue, flagged |
+| `rebuttal` | point-by-point response | ✅ normal, not flagged |
+| `cover_letter` | submission letter | 🔴 residue, flagged |
+| `review` / `notes` / `unknown` | other | conservative handling |
+
+`writing_audit` accepts a `profile` argument, or auto-detects it from the file path.
+
+## Automatic / incremental audit
+
+The plugin listens to `tools/post-execute`: when the agent writes/edits paper files (`.md` / `.tex` / `.txt`), it automatically audits and injects results into the next model request.
+
+- Audit state is persisted per file; only **incremental** changes are injected (new / resolved / still present)
+- No repeated injection when nothing changed
+- Before/after text is captured automatically, so Scholarship Lock + Epistemic Lock run without manually passing `original`
+
+## Full install
 
 ```sh
 # From npm (published — recommended)
@@ -157,176 +144,62 @@ dsh web
 
 Repository: https://github.com/xmutfyh/dsh-plugin-writing-guard
 
-## Document-profile awareness (v0.3)
+## Why not Humanizer / AI Detector?
 
-The same sentence means different things in different documents. Rules are scoped per document type:
+| | Writing Guard | Humanizer | AI Detector |
+|---|---|---|---|
+| Rules before writing | ✅ | ❌ | ❌ |
+| Checks while writing | ✅ | usually ❌ | ❌ |
+| Auto-audits paper edits | ✅ | ❌ | ❌ |
+| Full-text rewrite | ❌ | ✅ | ❌ |
+| Explainable issue location | ✅ | partial | partial |
+| Local rules (zero network / zero LLM) | ✅ | usually needs LLM | varies |
 
-| profile | meaning | e.g. `as requested by the reviewer` |
-|---|---|---|
-| `manuscript` | paper body | 🔴 revision residue, flagged |
-| `rebuttal` | point-by-point response | ✅ normal, not flagged |
-| `cover_letter` | submission letter | 🔴 residue, flagged |
-| `review` / `notes` / `unknown` | other | conservative handling |
+> A humanizer fixes the text after it is written; Writing Guard guards it as you write.
 
-`writing_audit` accepts a `profile` argument, or auto-detects it from the file path
-(rebuttal/cover_letter/manuscript keywords; `reviewer2_comments`, `my_notes`,
-`revision_notes` are recognized too).
+## Security & Privacy
 
-## What it detects
-
-Based on reviewer-shared AI-writing tell lists (dash overuse, "it's not X but Y", absolutist
-definitions, colon-title abuse), the "play to strengths / don't bait reviewers" principle, and
-published research (Kobak et al., *Science Advances* 2025, >15M biomedical abstracts;
-community word lists delve/tapestry/testament/leverage):
-
-| category | typical issue |
-|---|---|
-| revision residue | "revised model", "as requested", "we have updated", Chinese 本轮/投稿前/审稿人要求 |
-| claim calibration | "we do not claim", Chinese 本文并非要证明, self-deprecation; legitimate limitations are NOT flagged (ICMJE) |
-| rhetorical patterns | "不是X而是Y"/"not X but Y", "rather than" overuse, absolutist definitions, rule of three, restatement loops |
-| LLM-associated words | delve/tapestry/testament/leverage/harness etc. (density rule — a single occurrence is fine) |
-| academic style | we believe/think, vague quantifiers, abstract adverbs; "significantly" only prompts review of statistical context |
-| formatting | em-dash density (range en-dashes excluded), colon titles, Unicode math symbols (LaTeX workflow) |
-
-## Version history
-
-Full changelog, implementation details, and test increments are in [CHANGELOG.md](CHANGELOG.md).
-
-## Density thresholds (v0.3.3)
-
-Frequency rules use **per-1000-language-unit** density: English rules are normalized by English
-word count, Chinese rules by CJK character count (bilingual files don't dilute each other),
-with a **double gate**: `count >= minCount AND count/denominator*1000 >= perK` before flagging.
-Examples: "rather than" ≥4 and ≥1.0/1k words; em-dash ≥5 and ≥0.5/1k; LLM words ≥2 and ≥0.4/1k;
-Chinese connectives ≥8 and ≥2.0/1k chars. A 500-word abstract and a 12k-word manuscript no longer
-share the same threshold.
-
-## Preprocessing (v0.4 segment pipeline, on by default)
-
-Documents are split into typed segments (prose/heading/reference/code/math/table), and each rule
-declares which segment types it scans:
-
-- LLM vocabulary, revision residue → `prose`
-- colon titles → `heading` only (colons inside body prose don't count)
-- references/code/math/table → ignored by default (v0.5.2: an Appendix after References is still scanned)
-
-**Section detection** (Introduction/Methods/Results/Discussion/Conclusion…) powers
-`limitations-across-sections`: repeated limitation statements scattered across ≥3 top-level
-sections are flagged, while stating limitations once in the Discussion (ICMJE) is not.
-(v0.5.2: the section base level adapts to `# Title` + `## Sections` layouts; sub-headings under
-a top-level section are never counted as separate sections.)
-
-## Confidence / evidence (v0.3)
-
-Every rule carries `confidence` (high/medium/low) and `evidence` (literature/style-guide/heuristic/project-specific).
-Reports show `🔴 HIGH · conf high`, so you know which findings are deterministic rules
-(e.g. "revised" residue) and which are probabilistic signals (e.g. LLM word density).
-
-## Tools
-
-| tool | purpose |
-|---|---|
-| `writing_audit` | scan text/file; args: text/filePath, profile, verbose, projectResidueTerms, original (v0.6 Scholarship Lock: text before polishing — compares research entities), styleProfile (v0.6 author style profile JSON), journalProfile (v1.4 target-journal profile JSON); returns issues sorted by severity+confidence plus full-text stats and optional Journal Fit |
-| `writing_rules` | return the writing-discipline cheat sheet (profiles + density rules) |
-| `writing_style_profile` | v0.6: learn style metrics (sentence-length median/std, paragraph length, em-dash/hedge/connective density) from the author's previous papers (filePath/learnDir) → JSON for writing_audit's styleProfile |
-| `writing_journal_profile` | v1.4: distill a target-journal writing profile from representative papers (filePath/learnDir) → JSON for writing_audit's journalProfile |
-
-### Real output demo
-
-`writing_audit` on a paragraph containing revision residue (verbose=true, real output):
-
-```text
-写作纪律检查报告（文档类型: manuscript）：发现 3 处问题（高 3 / 中 0 / 低 0）
-- 统计：1 段 / 115 字符（英文 19 词 + 中文 0 字）；破折号 0；rather than 0；不是X而是Y 0；绝对化定义 0；三连排比 0；LLM过渡词 0；中文套话 0；冒号标题 0
-- 分类：修改过程残留 3
-
-🔴 [HIGH · conf high] 正文出现 "revised/revision" 修改过程残留 [para 0]
-    原文：The revised model uses the ΔP regression objective only. As requested by the reviewer, we h…
-    建议：改为中性论文语言：the proposed model / the model / the present analysis，把“修改”动作从正文清除。
-
-🔴 [HIGH · conf high] 审稿回应用语残留 [para 0]
-    原文：The revised model uses the ΔP regression objective only. As requested by the reviewer, we have updated the methods.
-    建议：直接陈述做法或结果本身，不引用审稿过程。
-
-🔴 [HIGH · conf high] "we have updated/modified" 修改叙述 [para 0]
-    原文：…ΔP regression objective only. As requested by the reviewer, we have updated the methods.
-    建议：把句子改写为对最终版本的直接陈述，例如直接描述模型/方法/结果，删除变更动词。
-
-（提示：加 verbose=true 可查看每条的建议与备注；默认只输出原文摘要）
-```
-
-## Auto-audit (on by default, v0.5 incremental mode)
-
-The plugin listens on `tools/post-execute`: when a **paper-like file** (.md/.tex/.txt whose path
-contains manuscript/paper/revision/response/论文/修订/返修…, or inside knowledge-base dirs like
-01_manuscript/) is written via `write`/`edit`, it auto-audits (auto profile detection) and
-injects the result into the model's next request via `additionalContexts`.
-
-**v0.5 incremental lint**: audit state is persisted per file
-(`~/.dsh/plugins/dsh-plugin-writing-guard/state.json`); each write injects only the **delta**
-(v0.5.2: fingerprints are based on the matched text itself, so editing other words in the same
-paragraph no longer causes false "resolved+added" re-injection):
-
-```text
-新增 1 项 / 已解决 4 项 / 仍存在 8 项   (1 new / 4 resolved / 8 remaining)
-```
-
-- No change → nothing injected (no repeated nagging)
-- Resolved-only → brief confirmation (doesn't consume the per-turn injection budget)
-- Only **new** issues are listed with suggestions; the full list is always available via `writing_audit`
-
-Configuration (web profile `cordis.patch.yml`):
-
-```yaml
-- id: dsh-plugin-writing-guard
-  config:
-    autoAuditOnWrite: true          # auto-audit paper writes (default true)
-    mode: conservative              # conservative|balanced|strict (overrides minSeverity; default conservative=high)
-    autoAuditMinSeverity: high      # high|medium|low (explicit value beats mode)
-    maxAutoInjectPerTurn: 2         # max auto-injections per agent turn (only notifications; tracking always runs)
-    verboseByDefault: false
-    autoBrief: false
-    projectResidueTerms: []         # project-internal vocabulary (appended to defaults; flagged as medium)
-    stateFile: ''                   # incremental state file (default ~/.dsh/plugins/dsh-plugin-writing-guard/state.json)
-```
-
-## FAQ
-
-### Is this an "AI de-flavoring" plugin for DSH?
-
-Sort of — but unlike a traditional Humanizer, Writing Guard detects common AI writing style
-*during* the writing/revision process instead of handing the whole text to another model to rewrite.
-
-### Does it support Chinese papers?
-
-Yes. Rules cover both Chinese and English papers: mechanical expressions, templated transitions,
-revision residue and defensive writing (Chinese by CJK char count, English by word count).
-
-### Does it support SCI / English academic writing?
-
-Yes. `writing_audit` checks English manuscripts for revision residue, defensive writing,
-LLM-overused expressions and common AI-style sentence patterns.
-
-### How is Writing Guard different from academic-humanizer?
-
-academic-humanizer edits existing text toward naturalness; Writing Guard continuously checks
-and prevents issues in the DSH paper workflow. They complement each other.
+- All rules run **locally**: zero network, zero LLM, zero subprocesses
+- The plugin only reads the paper files the agent is currently writing/editing and writes its incremental state under `~/.dsh/plugins/dsh-plugin-writing-guard/`
+- It does not collect or upload paper content
+- See [SECURITY.md](SECURITY.md)
 
 ## Tests
 
 ```sh
-npm test   # builds first, then runs 134 TP/TN/edge-case assertions (zero-dependency runner,
-           # incl. isPaperFile/profile detection, fingerprint-stability, Scholarship Lock and style-profile regressions)
+npm test
 ```
 
-CI (GitHub Actions) runs build + full tests on every push / PR.
+300+ deterministic TP / TN / boundary / regression tests covering:
 
-## Development
+- STYLE, Scholarship Lock, Epistemic Lock
+- Claim alignment, local citation integrity
+- Journal Profile, Journal Fit
+- Rhetorical semantics (Chinese / medoid / transition)
 
-```sh
-pnpm install && pnpm build   # TypeScript -> lib/
-# rule engine: src/rules.ts (zero dependencies, pure regex + statistics)
-```
+CI runs build + tests on every push / PR.
+
+## FAQ
+
+### Is this a DSH “remove AI flavor” plugin?
+
+You can think of it that way, but Writing Guard is not a traditional humanizer. It detects common AI writing patterns during paper writing and revision instead of rewriting the whole text with another model.
+
+### Does it support Chinese papers?
+
+Yes. Rules cover both Chinese and English academic writing patterns, with language-aware density thresholds (CJK characters vs. English words).
+
+### Does it support SCI / English academic writing?
+
+Yes. `writing_audit` checks English manuscripts for revision residue, defensive writing, LLM-overused expressions, and common AI-style sentence patterns.
+
+### What is the difference from academic-humanizer?
+
+academic-humanizer focuses on rewriting existing text into a more natural style; Writing Guard focuses on continuous checking and prevention inside the DSH paper workflow. They can be used together.
+
+## CHANGELOG
+
+Full changelog and implementation details are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
