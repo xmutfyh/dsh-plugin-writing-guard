@@ -4,7 +4,28 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-08-17
+
+### Added / Fixed — Semantic Hardening
+
+- **`claimDensity` 取代 `claimCount` 进入 Journal Fit**：`claimCount` 保留为描述性元数据，
+  主分数改用 `claims / 1000 words`，避免 section 长度直接主导分数。
+- **`ClaimSpan.spanKind`**：新增 `claim / procedural / descriptive / unknown` 启发式标签，
+  为后续真正的 proposition semantics 留出扩展点。
+- **移除旧 regex epistemic 重复计权**：Journal Fit 主分数不再直接使用 `hedgeDensity` /
+  `causalForce` / `evidentialForce` 三个旧 regex 密度，避免与 ClaimSpan epistemic ratios 重复。
+- **`results_discussion` 独立 canonical section**：不再把 `Results and Discussion` 强行并入
+  `results`，避免混合解释/机制污染 Results 语料。
+- **epistemic ratios 数值 TP/TN 测试**：覆盖 highCausal / strongEvidence / hedged / scope /
+  null 的真实语义。
+- `PLUGIN_VERSION` 1.6.0 → 1.6.1。
+
+### Tests
+
+- 298 → 308: semantic hardening TP/TN（10 项新增）。
+
 ## [1.6.0] - 2026-08-17
+
 
 ### Added — Rhetorical Moves（Introduction / Discussion / Results / Methods 序列）
 

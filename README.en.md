@@ -200,6 +200,14 @@ neatly**. Seven new deterministic/statistical rules (zero network):
 - Journal Profile `rhetoric` now includes `sectionMoves` and `transitions`.
 - Journal Fit adds `rhetorical move coverage` and `rhetorical order fit` (LCS-based).
 
+## v1.6.1 Semantic Hardening
+
+- Journal Fit main score now uses `claimDensity`; `claimCount` stays as descriptive metadata.
+- `ClaimSpan` gains `spanKind` (claim / procedural / descriptive / unknown).
+- Removed duplicate old regex epistemic scoring (`hedgeDensity`, `causalForce`, `evidentialForce`) from the main Journal Fit score.
+- `Results and Discussion` is now its own canonical `results_discussion` section.
+- Added numerical TP/TN tests for epistemic ratios.
+
 ## Density thresholds (v0.3.3)
 
 Frequency rules use **per-1000-language-unit** density: English rules are normalized by English

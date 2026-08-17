@@ -1666,7 +1666,7 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.6.0' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.6.1' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
   check('journal profile preserves only statistics', !JSON.stringify(profile).includes('This study investigates'))
@@ -1793,6 +1793,45 @@ console.log('=== 93. v1.6 Rhetorical Moves（Introduction/Discourse 序列）===
   const fitSection = report.journalFit?.sections.find((s) => s.name.toLowerCase() === 'introduction')
   check('journal fit includes rhetorical metrics', !!fitSection && fitSection.metrics.some((m) => m.metric.includes('rhetorical')), JSON.stringify(fitSection?.metrics.map((m) => m.metric)))
 }
+
+console.log('=== 94. v1.6.1 Semantic Hardening（epistemic ratio TP/TN + claimDensity + spanKind + results_discussion）===')
+{
+  const single = (text) => computeJournalProfileFromDocuments(
+    [{ text: `# Results\n\n${text}`, sourceId: 's' }],
+    { journal: 'Semantic' },
+  ).structure.sections.find((s) => s.name === 'results')
+
+  const high = single('The treatment caused mortality.')
+  check('highCausal TP', high && high.highCausalRatio.median > 0, JSON.stringify(high?.highCausalRatio))
+
+  const assoc = single('The treatment was associated with mortality.')
+  check('highCausal TN associated', assoc && assoc.highCausalRatio.median === 0, JSON.stringify(assoc?.highCausalRatio))
+
+  const fig = single('Figure 2 shows the architecture.')
+  check('strongEvidence TN figure descriptive', fig && fig.strongEvidentialRatio.median === 0, JSON.stringify(fig?.strongEvidentialRatio))
+
+  const demo = single('The results demonstrate that X increased Y.')
+  check('strongEvidence TP', demo && demo.strongEvidentialRatio.median > 0, JSON.stringify(demo?.strongEvidentialRatio))
+
+  const hedge = single('X may suggest Y.')
+  check('hedgedClaim TP', hedge && hedge.hedgedClaimRatio.median > 0, JSON.stringify(hedge?.hedgedClaimRatio))
+
+  const scope = single('Under these conditions, X increased Y.')
+  check('scopeQualified TP', scope && scope.scopeQualifiedRatio.median > 0, JSON.stringify(scope?.scopeQualifiedRatio))
+
+  const nullR = single('No significant difference was observed.')
+  check('nullFinding TP', nullR && nullR.nullFindingRatio.median > 0, JSON.stringify(nullR?.nullFindingRatio))
+
+  const density = single('The treatment caused mortality.')
+  check('claimDensity present', density && density.claimDensity.median > 0, JSON.stringify(density?.claimDensity))
+
+  const spans = extractClaimSpans('We collected samples and measured temperature.')
+  check('spanKind procedural', spans.some((s) => s.spanKind === 'procedural'), JSON.stringify(spans.map((s) => s.spanKind)))
+
+  const combined = computeJournalProfileFromDocuments([{ text: '# Results and Discussion\n\nX increased Y.', sourceId: 's' }])
+  check('results_discussion canonical', combined.structure.sections.some((s) => s.name === 'results_discussion'), JSON.stringify(combined.structure.sections.map((s) => s.name)))
+}
+
 
 
 

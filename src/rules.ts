@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.6.0'
+export const PLUGIN_VERSION = '1.6.1'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -290,6 +290,8 @@ export interface JournalSectionProfile {
   figureTableReferenceDensity: Distribution
   // ---------- v1.5 Epistemic Journal Fingerprint ----------
   claimCount: Distribution
+  /** v1.6.1：claims / 1000 words，用于 Journal Fit（raw count 仅作描述性元数据） */
+  claimDensity: Distribution
   highCausalRatio: Distribution
   hedgedClaimRatio: Distribution
   strongEvidentialRatio: Distribution
@@ -326,6 +328,7 @@ export interface JournalProfile {
     interpretationDensity?: Distribution
     // ---------- v1.5 Epistemic Journal Fingerprint ----------
     claimCount?: Distribution
+    claimDensity?: Distribution
     highCausalRatio?: Distribution
     hedgedClaimRatio?: Distribution
     strongEvidentialRatio?: Distribution
@@ -445,6 +448,7 @@ interface JournalSectionSample {
   figureTableReferenceDensity: number
   // ---------- v1.5 Epistemic Journal Fingerprint ----------
   claimCount: number
+  claimDensity: number
   highCausalRatio: number
   hedgedClaimRatio: number
   strongEvidentialRatio: number
@@ -463,7 +467,8 @@ function canonicalSectionName(name: string): string {
     n === 'numerical model' || n === 'numerical modeling' || n === 'numerical modelling'
   ) return 'methods'
   if (n === 'conclusion' || n === 'conclusions' || n === 'summary' || n === 'concluding remarks') return 'conclusion'
-  if (n === 'result' || n === 'results and discussion' || n === 'findings') return 'results'
+  if (n === 'result' || n === 'findings') return 'results'
+  if (n === 'results and discussion' || n === 'results & discussion' || n === 'results and discussions') return 'results_discussion'
   if (n === 'background' || n === 'introduction and background' || n === 'introduction and motivation') return 'introduction'
   return n
 }
@@ -537,6 +542,7 @@ function computeSectionSample(text: string): JournalSectionSample {
     bibliographicCitationDensity: perK((text.match(JOURNAL_BIBLIOGRAPHIC_CITATION_RE) ?? []).length),
     figureTableReferenceDensity: perK((text.match(JOURNAL_FIGURE_TABLE_REFERENCE_RE) ?? []).length),
     claimCount,
+    claimDensity: perK(claimCount),
     highCausalRatio: ratioOf((c) => c.causalLevel >= 4),
     hedgedClaimRatio: ratioOf((c) => c.hedged),
     strongEvidentialRatio: ratioOf((c) => c.evidentialLevel >= 4),
@@ -573,6 +579,7 @@ function aggregateSectionProfiles(samples: Array<JournalSectionSample & { docInd
       bibliographicCitationDensity: computeDistribution(g.samples.map((s) => s.bibliographicCitationDensity)),
       figureTableReferenceDensity: computeDistribution(g.samples.map((s) => s.figureTableReferenceDensity)),
       claimCount: computeDistribution(g.samples.map((s) => s.claimCount)),
+      claimDensity: computeDistribution(g.samples.map((s) => s.claimDensity)),
       highCausalRatio: computeDistribution(g.samples.map((s) => s.highCausalRatio)),
       hedgedClaimRatio: computeDistribution(g.samples.map((s) => s.hedgedClaimRatio)),
       strongEvidentialRatio: computeDistribution(g.samples.map((s) => s.strongEvidentialRatio)),
@@ -605,6 +612,7 @@ function aggregateGlobalSamples(samples: JournalSectionSample[]): {
       evidentialForce: computeDistribution(samples.map((s) => s.evidentialForce)),
       hedgeDensity: computeDistribution(samples.map((s) => s.hedgeDensity)),
       claimCount: computeDistribution(samples.map((s) => s.claimCount)),
+      claimDensity: computeDistribution(samples.map((s) => s.claimDensity)),
       highCausalRatio: computeDistribution(samples.map((s) => s.highCausalRatio)),
       hedgedClaimRatio: computeDistribution(samples.map((s) => s.hedgedClaimRatio)),
       strongEvidentialRatio: computeDistribution(samples.map((s) => s.strongEvidentialRatio)),
@@ -718,7 +726,7 @@ export function computeJournalProfileFromDocuments(
       articleType: opts?.articleType,
       discipline: opts?.discipline,
       sampleSize: opts?.sampleSize ?? parsed,
-      profileVersion: '1.6.0',
+      profileVersion: '1.6.1',
       corpusDate: new Date().toISOString().slice(0, 10),
     },
     structure: {
@@ -809,15 +817,12 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
     }
     addMetric('句长中位数', cur.sentenceLengthMedian, prof.sentenceLength)
     addMetric('段长中位数', cur.paragraphLengthMedian, prof.paragraphLength)
-    addMetric('hedge 密度', cur.hedgeDensity, prof.hedgeDensity)
-    addMetric('因果力密度', cur.causalForce, prof.causalForce)
-    addMetric('证据力密度', cur.evidentialForce, prof.evidentialForce)
     addMetric('第一人称句子比例', cur.firstPersonSentenceRatio, prof.firstPersonUsage, 0.05)
     addMetric('被动语态句子比例', cur.passiveSentenceRatio, prof.passiveVoice, 0.05)
     addMetric('文献引用密度', cur.bibliographicCitationDensity, prof.bibliographicCitationDensity)
     addMetric('图表引用密度', cur.figureTableReferenceDensity, prof.figureTableReferenceDensity)
-    // v1.5 Epistemic Journal Fingerprint
-    addMetric('claim 数量', cur.claimCount, prof.claimCount)
+    // v1.5 Epistemic Journal Fingerprint（v1.6.1 起主分数不再使用旧 regex hedge/causal/evidence 密度）
+    addMetric('claim 密度', cur.claimDensity, prof.claimDensity)
     addMetric('高因果主张比例', cur.highCausalRatio, prof.highCausalRatio, 0.05)
     addMetric('hedge 主张比例', cur.hedgedClaimRatio, prof.hedgedClaimRatio, 0.05)
     addMetric('强证据主张比例', cur.strongEvidentialRatio, prof.strongEvidentialRatio, 0.05)
@@ -1119,8 +1124,12 @@ function mergeClauseFragments(clauses: string[]): string[] {
 /** v1.0/v1.1/v1.2 ClaimSpan：一个子句内的一束主张标记。
  *  v1.1：marker 绑定到子句（claim-bound）。v1.2：scope 前缀/相对从句合并后，
  *  span 更接近真实 claim 而非 comma-delimited fragment。 */
+export type ClaimSpanKind = 'claim' | 'procedural' | 'descriptive' | 'unknown'
+
 export interface ClaimSpan {
   clause: string
+  /** v1.6.1：语义标签——scientific_claim / procedural / descriptive / unknown（初期为启发式） */
+  spanKind: ClaimSpanKind
   /** 因果力（-1 无；0 不确定 … 5 因果） */
   causalLevel: number
   /** 证据力（0 无证据动词；1 suggest … 7 prove/guarantee）——不含 hedge */
@@ -1215,8 +1224,18 @@ export function extractClaimSpans(sentence: string): ClaimSpan[] {
     const nullMarkers = clause.match(NULL_RESULT_RE) ?? []
     const scopeMarkers = clause.match(SCOPE_RE) ?? []
     const evidenceStatusMarkers = clause.match(EVIDENCE_STATUS_RE) ?? []
+    const hasEpistemic = causalLevel >= 0 || evidentialLevel > 0 || hedged ||
+      negationMarkers.length > 0 || nullMarkers.length > 0 || scopeMarkers.length > 0 || evidenceStatusMarkers.length > 0
+    let spanKind: ClaimSpanKind = 'unknown'
+    if (hasEpistemic) {
+      spanKind = 'claim'
+    } else if (/\b(?:used|measured|collected|performed|conducted|applied|employed|implemented|dried|heated|acquired|recorded|obtained|calculated|estimated|simulated|modeled|modelled)\b/i.test(clause)) {
+      spanKind = 'procedural'
+    } else if (/\b(?:figure|table|architecture|schematic|workflow|overview|diagram|example|samples|data)\b/i.test(clause)) {
+      spanKind = 'descriptive'
+    }
     spans.push({
-      clause, causalLevel, evidentialLevel, hedged, hedgeMarkers,
+      clause, spanKind, causalLevel, evidentialLevel, hedged, hedgeMarkers,
       causalMarkers, evidentialMarkers, negationMarkers, nullMarkers, scopeMarkers, evidenceStatusMarkers,
     })
   }
@@ -2918,9 +2937,10 @@ export function preprocess(text: string): DocumentView {
 
 /** 常见论文章节名（用于 section detection） */
 const SECTION_NAMES = [
-  'abstract', 'introduction', 'methods', 'methodology', 'materials and methods', 'results',
+  'abstract', 'introduction', 'methods', 'methodology', 'materials and methods',
+  'results and discussion', 'results & discussion', 'results',
   'discussion', 'conclusion', 'conclusions', 'limitations', 'related work',
-  '摘要', '引言', '方法', '材料与方法', '结果', '讨论', '结论', '局限性', '相关工作',
+  '摘要', '引言', '方法', '材料与方法', '结果与讨论', '结果', '讨论', '结论', '局限性', '相关工作',
 ]
 
 export interface Section {

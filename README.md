@@ -285,7 +285,7 @@ Scientific tokens          Scientific commitments
 | **`local-citation-integrity`** 🔴 | 零网络确定性：`\cite{key}` ↔ `.bib` 条目存在性、`\ref` ↔ `\label` 对应、bib 条目缺 title/year/author、同一 DOI 多 key；写作/自动审计都自动探测同目录 `.bib`；"该文献是否支持这句话"留在边界外 | violation/advisory |
 | **StyleProfile → 节奏指纹** | 新增 `sentenceLengthCV`/`shortSentenceRatio`/`longSentenceRatio`/`paragraphLengthStd`/`paragraphLengthCV`（向后兼容） | — |
 
-测试 246 → 276 项（v1.4 新增 Journal Profile/Fit 后为 284 项；v1.4.1 Corpus-aware 后为 291 项；v1.4.2 hardening 后为 293 项；v1.5 Epistemic Fingerprint 后为 294 项；v1.6 Rhetorical Moves 后为 298 项，见下）。
+测试 246 → 276 项（v1.4 新增 Journal Profile/Fit 后为 284 项；v1.4.1 Corpus-aware 后为 291 项；v1.4.2 hardening 后为 293 项；v1.5 Epistemic Fingerprint 后为 294 项；v1.6 Rhetorical Moves 后为 298 项；v1.6.1 Semantic Hardening 后为 308 项，见下）。
 
 ## v1.4 Journal Engine（目标期刊写作蒸馏与 Journal Fit）
 
@@ -352,6 +352,14 @@ Scientific tokens          Scientific commitments
 - Journal Fit 新增：
   - `rhetorical move coverage`
   - `rhetorical order fit`（LCS 序列相似度）
+
+## v1.6.1 Semantic Hardening
+
+- Journal Fit 主分数改用 `claimDensity`（claims/1000 words），`claimCount` 保留为描述性元数据。
+- `ClaimSpan` 新增 `spanKind`（claim / procedural / descriptive / unknown）。
+- 移除旧 regex `hedgeDensity` / `causalForce` / `evidentialForce` 的重复计权，主分数使用 ClaimSpan epistemic ratios。
+- `Results and Discussion` 独立为 `results_discussion`，不再混入 `results`。
+- 新增 epistemic ratio 数值 TP/TN 测试。
 
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
@@ -493,7 +501,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 298 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 claim-identity/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+不配对全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归/Journal Profile 与 Journal Fit/corpus-aware 聚合/CI-safe 真实语料/Epistemic Journal Fingerprint/Rhetorical Moves）
+npm test   # 自动先 build 再跑 308 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 claim-identity/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+不配对全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归/Journal Profile 与 Journal Fit/corpus-aware 聚合/CI-safe 真实语料/Epistemic Journal Fingerprint/Rhetorical Moves/Semantic Hardening）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。
