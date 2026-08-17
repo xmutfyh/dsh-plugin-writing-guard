@@ -9,6 +9,62 @@
 
 **适用于：中文论文、英文论文、SCI manuscript、毕业论文、学术写作与论文润色。**
 
+---
+
+## 一句话定位
+
+**Writing Guard：去掉 AI 写作痕迹，守住科学证据，写向目标期刊。**
+
+> 少一点 AI 腔，多一点证据，更贴近目标期刊。
+>
+> **Language can change. Evidence cannot.**
+
+我们不做“AI 检测器绕行工具”，而是：
+
+> **不是隐藏 AI，而是消除 AI 带来的坏写作。**
+
+## 三大支柱
+
+1. **去掉 AI 式防御性写作**
+   不是简单替换几个“AI 高频词”，而是识别并减少 `concession stacking`、`limitation pre-emption`、`generic value claim`、`unnecessary epistemic retreat` 这类“正确但没必要”的防御性学术写作。
+   > AI 越强，越会写“正确但没必要”的句子。
+
+2. **守住科学证据**
+   数字不能漂移、p 值不变、null finding 不消失、correlation 不能变 causation、citation claim 必须匹配证据、scope 不能被泛化。语言可以改，证据不能改。
+
+3. **写向目标期刊**
+   不是“写得像论文”，而是“写得像你要投的那本期刊”。从目标期刊代表论文中蒸馏写作分布，输出 Journal Fit，让润色结果更贴合 Nature Communications / IEEE TMI / Applied Energy / Journal of Cleaner Production 等真实投稿场景。
+
+### Before / After 一眼看懂
+
+**Before（典型的 AI 式防御性写作）**
+
+```text
+While these findings are promising, they should be interpreted
+with caution. Several limitations must also be acknowledged.
+Nevertheless, the results provide potentially valuable insights...
+```
+
+**Writing Guard 检测**
+
+```text
+⚠ Defensive-writing cluster
+- concession stacking
+- limitation pre-emption
+- generic value claim
+- unnecessary epistemic retreat
+```
+
+**After（更像一个真正写论文的人）**
+
+```text
+The model improved F1 by 4.2% over the strongest baseline.
+Performance decreased on the external cohort, indicating
+limited cross-domain generalization.
+```
+
+---
+
 如果你正在寻找：
 
 - DSH 论文去 AI 味插件

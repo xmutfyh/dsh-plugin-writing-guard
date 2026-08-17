@@ -15,6 +15,62 @@
 
 **Works with: Chinese papers, English papers, SCI manuscripts, theses, academic writing and polishing.**
 
+---
+
+## One-line positioning
+
+**Writing Guard helps researchers remove AI-style writing, preserve scientific evidence, and write for their target journal.**
+
+> Less AI. More Evidence. Better Journal Fit.
+>
+> **Language can change. Evidence cannot.**
+
+We are not an "AI detector bypass" tool:
+
+> **We don't hide AI use. We remove bad AI writing.**
+
+## Three pillars
+
+1. **Remove AI-style / defensive writing**
+   Not just swapping a few "AI buzzwords". Detect `concession stacking`, `limitation pre-emption`, `generic value claim`, and `unnecessary epistemic retreat` — the “correct but unnecessary” sentences that make academic prose read like defensive AI writing.
+   > Stronger AI models increasingly write “correct but unnecessary” sentences.
+
+2. **Protect the evidence**
+   Numbers don't drift. p-values don't change. Null findings don't disappear. Correlation doesn't become causation. Citation claims must match evidence. Scope is not silently generalized.
+
+3. **Write for your target journal**
+   Not “write like a paper” — **write like the journal you are targeting**. Distill writing distributions from representative target-journal papers and get a Journal Fit report for Nature Communications, IEEE TMI, Applied Energy, Journal of Cleaner Production, and more.
+
+### Before / After at a glance
+
+**Before (typical defensive AI writing)**
+
+```text
+While these findings are promising, they should be interpreted
+with caution. Several limitations must also be acknowledged.
+Nevertheless, the results provide potentially valuable insights...
+```
+
+**Writing Guard detects**
+
+```text
+⚠ Defensive-writing cluster
+- concession stacking
+- limitation pre-emption
+- generic value claim
+- unnecessary epistemic retreat
+```
+
+**After (more like a real researcher)**
+
+```text
+The model improved F1 by 4.2% over the strongest baseline.
+Performance decreased on the external cohort, indicating
+limited cross-domain generalization.
+```
+
+---
+
 The plugin is not a one-shot "humanizer" that rewrites your whole paper after it is done.
 Instead it works continuously:
 

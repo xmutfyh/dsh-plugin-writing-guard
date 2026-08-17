@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-writing-guard",
   "version": "1.6.1",
-  "description": "Deterministic manuscript integrity guard and journal-fit engine for AI-assisted academic revision 鈥?protects scientific facts, claim strength (causal & evidential axes), negation, null findings, scope, citations and author style during polishing, while flagging mechanical AI writing (Scholarship Lock + Epistemic Lock; writing_audit / writing_rules / writing_style_profile / writing_journal_profile; local, zero network, zero LLM)",
+  "description": "DeepSeek Harness (DSH) academic writing guard for papers — 论文去AI味 / AI-writing style detection, evidence preservation, journal-fit calibration, manuscript proofreading, writing_audit & automatic checks. Local, zero network, zero LLM.",
   "type": "module",
   "main": "lib/index.js",
   "files": [
@@ -36,11 +36,18 @@
     "dsh-plugin",
     "host-plugin",
     "academic-writing",
+    "scientific-writing",
+    "paper-writing",
     "paper",
     "manuscript",
     "writing-style",
     "ai-detection",
+    "ai-writing",
+    "llm-writing",
     "defensive-writing",
+    "scientific-integrity",
+    "evidence-based-writing",
+    "journal-fit",
     "proofreading",
     "reviewer"
   ],
