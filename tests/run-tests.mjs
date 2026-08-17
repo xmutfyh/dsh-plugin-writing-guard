@@ -4,7 +4,7 @@
  * 目标：每条核心规则至少有一个 true-positive 和一个 true-negative 断言。
  * 运行：node tests/run-tests.mjs
  */
-import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
+import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, computeJournalProfile, auditJournalFit, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
 import { isPaperFile, baselineByteSize, pruneBaselines } from '../lib/index.js'
 
 let pass = 0
@@ -1642,6 +1642,63 @@ console.log('=== 88. v1.3 summary-cliche-positional（总结套话位置感知�
   const tn = '# Introduction\n\n综上所述，本研究有重要意义。\n\n# Results\n\n结果内容。\n\n# Methods\n\n方法内容。'
   const r2 = auditText(tn, { profile: 'manuscript' })
   check('summary cliche positional TN (single occurrence)', !hasRule(r2, 'summary-cliche-positional'), JSON.stringify(r2.hits.map((h) => h.ruleId)))
+}
+
+console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
+{
+  const corpus = [
+    '# Abstract',
+    '',
+    'This study investigates the effect of temperature on drying. The experiment was performed in a microfluidic device. We observed a 12% increase in rate.',
+    '# Introduction',
+    '',
+    'Drying in porous media is important. Several studies have examined this process. However, a gap remains in understanding salt precipitation. We therefore aim to quantify the effect.',
+    '# Methods',
+    '',
+    'We used a microfluidic chip. The chip was heated at 25, 50, and 75 °C. Each condition was repeated three times. The drying rate was measured by image analysis.',
+    '# Results',
+    '',
+    'Higher temperatures significantly increased the drying rate. The rate rose from 0.5 to 1.2 mL/h. These results demonstrate a clear thermal effect.',
+    '# Discussion',
+    '',
+    'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
+  ].join('\n')
+  const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.4.0' && profile.structure.sections.length >= 4)
+  check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
+  check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
+  check('journal profile preserves only statistics', profile.rhetoric.moves.length === 0 && !JSON.stringify(profile).includes('This study investigates'))
+}
+
+console.log('=== 90. v1.4 Journal Fit 审计（auditJournalFit / writing_audit journalProfile）===')
+{
+  const corpus = [
+    '# Abstract',
+    '',
+    'This study investigates the effect of temperature on drying. The experiment was performed in a microfluidic device. We observed a 12% increase in rate.',
+    '# Introduction',
+    '',
+    'Drying in porous media is important. Several studies have examined this process. However, a gap remains in understanding salt precipitation. We therefore aim to quantify the effect.',
+    '# Methods',
+    '',
+    'We used a microfluidic chip. The chip was heated at 25, 50, and 75 °C. Each condition was repeated three times. The drying rate was measured by image analysis.',
+    '# Results',
+    '',
+    'Higher temperatures significantly increased the drying rate. The rate rose from 0.5 to 1.2 mL/h. These results demonstrate a clear thermal effect.',
+    '# Discussion',
+    '',
+    'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
+  ].join('\n')
+  const profile = computeJournalProfile(corpus, { journal: 'Test Journal' })
+  const manuscript = corpus
+  const report = auditText(manuscript, { profile: 'manuscript', journalProfile: profile })
+  check('journal fit attached to report', !!report.journalFit && report.journalFit.journal === 'Test Journal' && report.journalFit.sections.length > 0)
+  check('journal fit scores in range', report.journalFit.sections.every((s) => s.score >= 0 && s.score <= 100))
+  check('journal fit format includes block', formatReport(report, { verbose: true }).includes('期刊写作契合度（Journal Fit · Test Journal）'))
+
+  const withLimits = manuscript + '\n\n# Limitations\n\nThis study has some limitations. The sample size is small. Further work is needed.'
+  const report2 = auditText(withLimits, { profile: 'manuscript', journalProfile: profile })
+  check('journal fit warns on missing profile section', report2.journalFit?.warnings.some((w) => w.toLowerCase().includes('limitations')) ?? false, JSON.stringify(report2.journalFit?.warnings))
 }
 
 console.log('')

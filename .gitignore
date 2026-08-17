@@ -16,3 +16,6 @@ Thumbs.db
 # NOTE: lib/ IS committed on purpose — DSH plugins install from GitHub
 # tarballs without a build step (same convention as dsh-proof /
 # dsh-custom-tool). Keep compiled output in sync with src/ on every release.
+
+# Codex task runner output
+.codex-last-message.md

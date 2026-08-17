@@ -14,10 +14,11 @@ description: >-
 
 # 论文写作纪律守则（writing-guard）
 
-本技能是 `dsh-plugin-writing-guard`（DSH 插件，v1.3.0）的独立静态版——规则集与插件一致，
+本技能是 `dsh-plugin-writing-guard`（DSH 插件，v1.4.0）的独立静态版——规则集与插件一致，
 供没有 DSH 的环境（Codex / Claude Code / Antigravity / 任意 agent）在写作与润色时执行。
 所有规则均为确定性正则/统计，零网络零 LLM；源插件还提供 `writing_audit`（扫描）、
-`writing_rules`（速查）、`writing_style_profile`（作者风格档案）工具与 Scholarship Lock 实体对比。
+`writing_rules`（速查）、`writing_style_profile`（作者风格档案）、`writing_journal_profile`
+（目标期刊写作档案）工具与 Scholarship Lock 实体对比。
 
 ---
 
@@ -127,6 +128,17 @@ description: >-
     KEEP / TIGHTEN / REFRAME / RELOCATE / CUT / QUERY，不确定就 QUERY，不要自动删除；
   - `ADVISORY`（纯文体：长句/密度/格式）——可保留并说明理由。
 
+## 7.5 期刊写作契合（v1.4 Journal Engine）
+
+- 目标不是"模仿 Nature 风格"，而是从目标期刊 author guidelines + 代表论文中提取可复用的
+  统计规律（Journal Writing Profile）：句长/段长/hedge 密度/因果力/证据力/第一人称/被动语态/
+  引用密度分布。
+- 用 `writing_journal_profile` 从代表论文生成 profile；用 `writing_audit(journalProfile=JSON)`
+  对当前稿件做 section-level Journal Fit（每个章节契合度百分比 + 主要差异 + 目标 P10-P90）。
+- 优先级：Scientific Invariant > Epistemic Safety > Journal Requirement > Journal Norm >
+  Journal Style——期刊风格永远不能覆盖科学完整性；原文只支持 "associated with" 时，
+  任何 Journal Profile 都不能推动改成 "caused"。
+
 ## 8. 发布原则与提交前自查
 
 - 只围绕优势组织论文；不写工作汇报、不主动示弱、不替审稿人攻击自己；
@@ -135,9 +147,11 @@ description: >-
   是否被改动（语言润色不得改变科研事实——Scholarship Lock）；② 主张强度是否沿阶梯漂移、
   否定/零结果是否被翻转、scope 边界是否消失（Epistemic Lock）；③ 高危项清零、中危 ≤3 处；
   ④ 若在 DSH 环境，用 `writing_audit`（自动路径已带修改前基线）复核；⑤ 用
-  `writing_style_profile` 学习作者历史风格，句长分布向作者靠拢。
+  `writing_style_profile` 学习作者历史风格，句长分布向作者靠拢；⑥ 若已有目标期刊，
+  用 `writing_journal_profile` 生成/加载 Journal Profile，并用 `writing_audit(journalProfile=...)`
+  检查 Journal Fit，但期刊风格调整不得改变 science。
 
 ---
 
-*本守则来源于 dsh-plugin-writing-guard v1.3.0（MIT）。检测类规则为概率信号：命中即人工复核，
+*本守则来源于 dsh-plugin-writing-guard v1.4.0（MIT）。检测类规则为概率信号：命中即人工复核，
 专业术语与正当 limitations 不因规则报警而删改。*

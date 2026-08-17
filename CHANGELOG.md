@@ -4,6 +4,28 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-08-17
+
+### Added — Journal Engine（期刊写作蒸馏与 Journal Fit，DSH Scientific Writing Guard 基础层）
+
+- **`JournalProfile` schema**: 新增 `Distribution` / `JournalSectionProfile` / `JournalProfile` /
+  `JournalFitReport` 类型——从目标期刊代表论文提取句长/段长/hedge/因果力/证据力/第一人称/被动语态/
+  引用密度的抽象统计分布，不保存论文原句。
+- **`writing_journal_profile` 工具**: 从目标期刊代表论文目录/文件（.md/.tex/.txt）蒸馏 Journal Profile，
+  零网络零 LLM，纯本地统计；支持 `journal` / `articleType` / `discipline` 元数据。
+- **`writing_audit(journalProfile=...)`**: 传入 Journal Profile JSON 后，输出 section-level Journal Fit
+  报告（每个章节契合度百分比 + 主要差异 + 目标分布范围），并在 `formatReport` 中独立展示。
+- **`computeJournalProfile` / `auditJournalFit`**: 导出纯函数，供 tests / 其他 DSH 工具直接调用。
+- **`rulesBrief` 新增 Journal Engine 纪律**: 明确 Journal Fit 不能覆盖 Scientific Integrity 的优先级
+  （Invariant > Epistemic Safety > Journal Requirement > Journal Norm > Journal Style）。
+- **`claimAnchor` 中文支持**: Epistemic 指纹的 claim identity 增加 CJK bigram，帮助中文 scientific
+  revision 区分不同 claim 上的相同漂移（模型A vs 治疗组不再因同一种关联→因果变化而指纹碰撞）。
+- `PLUGIN_VERSION` 1.3.0 → 1.4.0，package.json / CHANGELOG / SKILL / rules.ts 版本统一。
+
+### Tests
+
+- 276 → 284: sections 89–90（Journal Profile 蒸馏 metadata/distributions/statistics-only、Journal Fit 审计/format/缺失章节 warning）。
+
 ## [1.3.0] - 2026-08-16
 
 ### Added — 篇章统计层（第 10 轮评审 9.55/10：局部规则 → 篇章统计 → 科学完整性）

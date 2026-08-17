@@ -22,11 +22,12 @@
 
 **写作前提供规则 → 写作过程中自动守卫 → 修改后自动审计。**
 
-它提供三个 DSH 原生工具：
+它提供四个 DSH 原生工具：
 
 - `writing_rules`：写作前加载学术写作纪律
-- `writing_audit`：检查论文中的 AI-style patterns、revision residue、defensive writing、LLM 高频表达及结构化写作痕迹；v0.6 起支持 Scholarship Lock（传 `original` 对比润色前后科研事实）与作者风格档案（`styleProfile`）；v0.8 起自动路径直接启用双锁（见下）
+- `writing_audit`：检查论文中的 AI-style patterns、revision residue、defensive writing、LLM 高频表达及结构化写作痕迹；v0.6 起支持 Scholarship Lock（传 `original` 对比润色前后科研事实）与作者风格档案（`styleProfile`）；v1.4 起支持 Journal Profile（`journalProfile`）做目标期刊写作契合度；v0.8 起自动路径直接启用双锁（见下）
 - `writing_style_profile`：从作者历史论文统计写作风格指标（句长/密度），零 LLM
+- `writing_journal_profile`：从目标期刊代表论文蒸馏写作分布（Journal Profile），零 LLM
 
 并支持在 `.md` / `.tex` / `.txt` 论文文件被 `write` / `edit` 修改后自动执行审计（v0.5 增量模式），
 将高风险问题反馈给 Agent。**v0.8 起自动审计自动捕获修改前的文本**（`tools/pre-execute` 快照 +
@@ -284,7 +285,31 @@ Scientific tokens          Scientific commitments
 | **`local-citation-integrity`** 🔴 | 零网络确定性：`\cite{key}` ↔ `.bib` 条目存在性、`\ref` ↔ `\label` 对应、bib 条目缺 title/year/author、同一 DOI 多 key；写作/自动审计都自动探测同目录 `.bib`；"该文献是否支持这句话"留在边界外 | violation/advisory |
 | **StyleProfile → 节奏指纹** | 新增 `sentenceLengthCV`/`shortSentenceRatio`/`longSentenceRatio`/`paragraphLengthStd`/`paragraphLengthCV`（向后兼容） | — |
 
-测试 246 → 276 项。
+测试 246 → 276 项（v1.4 新增 Journal Profile/Fit 后为 284 项，见下）。
+
+## v1.4 Journal Engine（目标期刊写作蒸馏与 Journal Fit）
+
+> 在 Integrity Engine（Scholarship + Epistemic Lock）之上新增 **Journal Engine**：不是简单
+> "模仿 Nature 风格"，而是从目标期刊代表论文中蒸馏可复用的**写作分布**，让 AI 修改论文时不仅
+> 不改变 science，还能向目标期刊的真实写作规范收敛。全部 deterministic/statistical，零网络零 LLM。
+
+| 能力 | 内容 |
+|---|---|
+| **`writing_journal_profile`** | 从目标期刊代表论文（.md/.tex/.txt）生成 Journal Profile：每个章节的句长/段长分布、hedge/因果力/证据力密度、第一人称/被动语态比例、全文引用密度；只保存抽象统计，不保存原句 |
+| **`writing_audit(journalProfile=...)`** | 传入 Journal Profile JSON 后输出 section-level Journal Fit：每个章节契合度百分比 + 主要差异 + 目标分布范围（P10-P90） |
+| **`computeJournalProfile` / `auditJournalFit`** | 导出纯函数，供 tests / 其他工具直接调用 |
+| **优先级纪律** | Scientific Invariant > Epistemic Safety > Journal Requirement > Journal Norm > Journal Style；期刊风格永远不能覆盖科学完整性 |
+
+示例输出（formatReport 尾部）：
+
+```text
+期刊写作契合度（Journal Fit · nature-communications）：总分 74%
+  Abstract 86%
+  Introduction 78%
+  Methods 91%
+  Results 59%
+  Discussion 76%
+```
 
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
@@ -327,9 +352,10 @@ Scientific tokens          Scientific commitments
 
 | 工具 | 用途 |
 |---|---|
-| `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose、projectResidueTerms、original（v0.6 Scholarship Lock：修改前原文，对比科研实体变化）、styleProfile（v0.6 作者风格档案 JSON）；返回按严重度+置信度排序的问题清单与全文统计 |
+| `writing_audit` | 扫描文本/文件；参数：text/filePath、profile、verbose、projectResidueTerms、original（v0.6 Scholarship Lock：修改前原文，对比科研实体变化）、styleProfile（v0.6 作者风格档案 JSON）、journalProfile（v1.4 Journal Profile JSON：目标期刊写作契合度）；返回按严重度+置信度排序的问题清单与全文统计 |
 | `writing_rules` | 返回写作纪律速查（含 profile 与密度说明） |
 | `writing_style_profile` | v0.6：从作者历史论文（filePath/learnDir）统计风格指标（句长中位数/标准差、段长、破折号/hedge/连接词密度），输出 JSON 供 writing_audit 的 styleProfile 使用 |
+| `writing_journal_profile` | v1.4：从目标期刊代表论文（filePath/learnDir）蒸馏 Journal Profile（章节句长/段长/hedge/因果力/证据力/第一人称/被动语态/引用密度分布），输出 JSON 供 writing_audit 的 journalProfile 使用 |
 
 ### 真实输出演示
 
@@ -425,7 +451,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 246 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 claim-identity/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+不配对全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归）
+npm test   # 自动先 build 再跑 284 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 claim-identity/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+不配对全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归/Journal Profile 与 Journal Fit）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。
