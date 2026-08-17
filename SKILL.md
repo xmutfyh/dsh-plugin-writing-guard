@@ -14,7 +14,7 @@ description: >-
 
 # 论文写作纪律守则（writing-guard）
 
-本技能是 `dsh-plugin-writing-guard`（DSH 插件，v1.5.0）的独立静态版——规则集与插件一致，
+本技能是 `dsh-plugin-writing-guard`（DSH 插件，v1.6.0）的独立静态版——规则集与插件一致，
 供没有 DSH 的环境（Codex / Claude Code / Antigravity / 任意 agent）在写作与润色时执行。
 所有规则均为确定性正则/统计，零网络零 LLM；源插件还提供 `writing_audit`（扫描）、
 `writing_rules`（速查）、`writing_style_profile`（作者风格档案）、`writing_journal_profile`
@@ -142,6 +142,9 @@ description: >-
 - v1.5.0：Journal Engine 复用 `extractClaimSpans` 生成 epistemic fingerprint——
   `claimCount` / `highCausalRatio` / `hedgedClaimRatio` / `strongEvidentialRatio` /
   `scopeQualifiedRatio` / `nullFindingRatio` 均进入 Journal Fit。
+- v1.6.0：Rhetorical Moves——`detectRhetoricalMoves` 提取 Introduction/Discussion/Results/Methods
+  move 序列；Journal Profile 含 `sectionMoves` 与 `transitions`；Journal Fit 比较
+  `rhetorical move coverage` 与 `rhetorical order fit`。
 - 优先级：Scientific Invariant > Epistemic Safety > Journal Requirement > Journal Norm >
   Journal Style——期刊风格永远不能覆盖科学完整性；原文只支持 "associated with" 时，
   任何 Journal Profile 都不能推动改成 "caused"。
@@ -160,5 +163,5 @@ description: >-
 
 ---
 
-*本守则来源于 dsh-plugin-writing-guard v1.5.0（MIT）。检测类规则为概率信号：命中即人工复核，
+*本守则来源于 dsh-plugin-writing-guard v1.6.0（MIT）。检测类规则为概率信号：命中即人工复核，
 专业术语与正当 limitations 不因规则报警而删改。*

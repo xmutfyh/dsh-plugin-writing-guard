@@ -4,7 +4,7 @@
  * 目标：每条核心规则至少有一个 true-positive 和一个 true-negative 断言。
  * 运行：node tests/run-tests.mjs
  */
-import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, computeJournalProfile, computeJournalProfileFromDocuments, auditJournalFit, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
+import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, computeJournalProfile, computeJournalProfileFromDocuments, auditJournalFit, detectRhetoricalMoves, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
 import { isPaperFile, baselineByteSize, pruneBaselines } from '../lib/index.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -1666,10 +1666,10 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.5.0' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.6.0' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
-  check('journal profile preserves only statistics', profile.rhetoric.moves.length === 0 && !JSON.stringify(profile).includes('This study investigates'))
+  check('journal profile preserves only statistics', !JSON.stringify(profile).includes('This study investigates'))
 }
 
 console.log('=== 90. v1.4 Journal Fit 审计（auditJournalFit / writing_audit journalProfile）===')
@@ -1773,6 +1773,27 @@ console.log('=== 92. v1.4.2 real-corpus smoke test（CI 可跳过，本地 ESR/s
     }
   }
 }
+
+console.log('=== 93. v1.6 Rhetorical Moves（Introduction/Discourse 序列）===')
+{
+  const intro = 'In recent years, CO2 storage has become important. However, little is known about salt precipitation. This study aims to quantify the effect. We used a microfluidic chip.'
+  const moves = detectRhetoricalMoves(intro, 'introduction')
+  check('rhetorical moves detect background/gap/objective/method', moves.includes('background') && moves.includes('gap') && moves.includes('objective') && moves.includes('method'), JSON.stringify(moves))
+
+  const docs = [
+    { text: '# Introduction\n\nIn recent years, CO2 storage has become important. However, little is known. This study aims to quantify.', sourceId: 'a' },
+    { text: '# Introduction\n\nCO2 storage is critical. Yet few studies exist. We propose a new model.', sourceId: 'b' },
+  ]
+  const profile = computeJournalProfileFromDocuments(docs, { journal: 'Rhetoric Test', sampleSize: 2 })
+  const introMoves = profile.rhetoric.sectionMoves?.['introduction'] ?? []
+  check('rhetoric profile has section moves', introMoves.some((m) => m.move === 'background') && introMoves.some((m) => m.move === 'gap'), JSON.stringify(introMoves))
+  check('rhetoric profile has transitions', Array.isArray(profile.rhetoric.transitions) && profile.rhetoric.transitions.length > 0, JSON.stringify(profile.rhetoric.transitions))
+
+  const report = auditText(`# Introduction\n\n${intro}`, { profile: 'manuscript', journalProfile: profile })
+  const fitSection = report.journalFit?.sections.find((s) => s.name.toLowerCase() === 'introduction')
+  check('journal fit includes rhetorical metrics', !!fitSection && fitSection.metrics.some((m) => m.metric.includes('rhetorical')), JSON.stringify(fitSection?.metrics.map((m) => m.metric)))
+}
+
 
 
 console.log('')

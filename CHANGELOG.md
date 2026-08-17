@@ -4,7 +4,26 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-08-17
+
+### Added — Rhetorical Moves（Introduction / Discussion / Results / Methods 序列）
+
+- **`detectRhetoricalMoves(text, sectionName)`**: 零 LLM 的轻量 rhetorical move 检测，返回去重后的 move 序列。
+- **Journal Profile `rhetoric` 升级**：
+  - `sectionMoves`: 每个 canonical section 的 move 出现频率
+  - `transitions`: move → move 的转移概率
+  - `moves`: 全局 move 频率
+- **Journal Fit 新增 rhetorical 指标**：
+  - `rhetorical move coverage`
+  - `rhetorical order fit`（LCS 序列相似度）
+- `PLUGIN_VERSION` 1.5.0 → 1.6.0。
+
+### Tests
+
+- 294 → 298: rhetorical moves 单元测试、rhetoric profile sectionMoves/transitions、Journal Fit rhetorical metrics。
+
 ## [1.5.0] - 2026-08-17
+
 
 ### Added — Epistemic Journal Fingerprint（复用 ClaimSpan）
 

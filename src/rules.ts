@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.5.0'
+export const PLUGIN_VERSION = '1.6.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -314,8 +314,10 @@ export interface JournalProfile {
     sectionLengthDistribution?: Distribution
   }
   rhetoric: {
-    moves: Array<{ move: string; frequency: number }>
-    transitions?: Array<{ from: string; to: string; probability: number }>
+    moves: JournalRhetoricalMoveStat[]
+    /** v1.6：按 canonical section 统计的 rhetorical move 频率 */
+    sectionMoves?: Record<string, JournalRhetoricalMoveStat[]>
+    transitions?: JournalRhetoricalTransition[]
   }
   epistemics: {
     causalForce?: Distribution
@@ -379,6 +381,17 @@ export interface JournalFitReport {
   corpusSize: number
   sections: JournalFitSection[]
   warnings: string[]
+}
+
+export interface JournalRhetoricalMoveStat {
+  move: string
+  frequency: number
+}
+
+export interface JournalRhetoricalTransition {
+  from: string
+  to: string
+  probability: number
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100
@@ -453,6 +466,44 @@ function canonicalSectionName(name: string): string {
   if (n === 'result' || n === 'results and discussion' || n === 'findings') return 'results'
   if (n === 'background' || n === 'introduction and background' || n === 'introduction and motivation') return 'introduction'
   return n
+}
+
+/** v1.6：轻量 rhetorical move 检测（零 LLM，按句匹配模式，返回去重后的 move 序列） */
+export function detectRhetoricalMoves(text: string, sectionName?: string): string[] {
+  const section = (sectionName ?? '').toLowerCase()
+  const moves: string[] = []
+  const pushMove = (move: string): void => {
+    if (moves[moves.length - 1] !== move) moves.push(move)
+  }
+  const sentences = splitSentences(text)
+  const isIntro = section.includes('introduction') || section.includes('background')
+  const isDiscussion = section.includes('discussion') || section.includes('conclusion')
+  const isResults = section.includes('result')
+  const isMethods = section.includes('method')
+
+  for (const s of sentences) {
+    if (isIntro) {
+      if (/\b(?:in recent years|over the past|has become|is (?:important|critical|essential)|plays? a (?:key|critical|important|major) role|background|随着|近年来|在过去的|变得|具有重要|至关重要|背景)\b/i.test(s)) pushMove('background')
+      else if (/\b(?:however|yet|remains? (?:unclear|poorly understood|unknown)|little is known|few studies|no studies|a gap|limited research|缺乏|尚未|仍然|不足|鲜有|少有|空白)\b/i.test(s)) pushMove('gap')
+      else if (/\b(?:this (?:study|paper|work|review) (?:aims?|presents?|proposes?|investigates?|reviews?)|we aim|our aim|the purpose|本文|本研究|我们(?:旨在|提出|采用|分析|研究)|目的是)\b/i.test(s)) pushMove('objective')
+      else if (/\b(?:we (?:used|applied|developed|proposed|performed)|this (?:study|paper) (?:uses|applies|develops)|本文(?:采用|使用|提出|基于)|我们(?:使用|采用|提出|构建))\b/i.test(s)) pushMove('method')
+    } else if (isDiscussion) {
+      if (/\b(?:in summary|in conclusion|taken together|overall|综上所述|总的来说|总之)\b/i.test(s)) pushMove('summary')
+      else if (/\b(?:suggests?|indicates?|demonstrates?|implies?|shows?|表明|说明|意味着|支持|证实)\b/i.test(s)) pushMove('interpretation')
+      else if (/\b(?:limitation|limited|caveat|however|should be interpreted|局限|不足|限制|需要谨慎)\b/i.test(s)) pushMove('limitation')
+      else if (/\b(?:implication|practical (?:implications?|significance)|important for|意义|启示|对.*具有重要意义)\b/i.test(s)) pushMove('implication')
+      else if (/\b(?:future (?:work|research|studies)|further (?:work|research|studies)|next step|未来|下一步|后续)\b/i.test(s)) pushMove('future')
+    } else if (isResults) {
+      if (/\b(?:we (?:found|observed)|the results (?:show|indicate|demonstrate)|results? (?:shows?|indicate|demonstrate)|发现|结果表明|结果显示)\b/i.test(s)) pushMove('finding')
+      else if (/\b(?:compared with|compared to|in contrast|versus|与.*相比|对比|而)\b/i.test(s)) pushMove('comparison')
+      else if (/\b(?:surprisingly|unexpectedly|interestingly|值得注意的是|出乎意料)\b/i.test(s)) pushMove('unexpected')
+    } else if (isMethods) {
+      if (/\b(?:we (?:used|employed|applied)|this (?:study|work) (?:uses|employs)|本文(?:采用|使用)|实验(?:采用|使用)|方法)\b/i.test(s)) pushMove('setup')
+      else if (/\b(?:data|dataset|samples?|materials?|数据|样本|材料)\b/i.test(s)) pushMove('data')
+      else if (/\b(?:analysis|analyses|model|simulation|统计|分析|模型|模拟)\b/i.test(s)) pushMove('analysis')
+    }
+  }
+  return moves
 }
 
 function computeSectionSample(text: string): JournalSectionSample {
@@ -569,6 +620,57 @@ function aggregateGlobalSamples(samples: JournalSectionSample[]): {
   }
 }
 
+interface RhetoricalObservation {
+  section: string
+  moves: string[]
+  docIndex: number
+}
+
+function computeRhetoricProfile(observations: RhetoricalObservation[]): JournalProfile['rhetoric'] {
+  const sectionGroups = new Map<string, { docs: Set<number>; sequences: string[][] }>()
+  const allMoveCounts = new Map<string, number>()
+  for (const obs of observations) {
+    let g = sectionGroups.get(obs.section)
+    if (!g) {
+      g = { docs: new Set(), sequences: [] }
+      sectionGroups.set(obs.section, g)
+    }
+    g.docs.add(obs.docIndex)
+    g.sequences.push(obs.moves)
+    for (const m of new Set(obs.moves)) allMoveCounts.set(m, (allMoveCounts.get(m) ?? 0) + 1)
+  }
+  const sectionMoves: Record<string, JournalRhetoricalMoveStat[]> = {}
+  const transitionsMap = new Map<string, Map<string, number>>()
+  const fromCounts = new Map<string, number>()
+  for (const [section, g] of sectionGroups) {
+    const counts = new Map<string, number>()
+    for (const seq of g.sequences) {
+      for (const m of new Set(seq)) counts.set(m, (counts.get(m) ?? 0) + 1)
+      for (let i = 0; i + 1 < seq.length; i++) {
+        const from = seq[i]
+        const to = seq[i + 1]
+        if (!transitionsMap.has(from)) transitionsMap.set(from, new Map())
+        transitionsMap.get(from)!.set(to, (transitionsMap.get(from)!.get(to) ?? 0) + 1)
+        fromCounts.set(from, (fromCounts.get(from) ?? 0) + 1)
+      }
+    }
+    sectionMoves[section] = [...counts.entries()]
+      .map(([move, count]) => ({ move, frequency: g.docs.size > 0 ? round2(count / g.docs.size) : 0 }))
+      .sort((a, b) => b.frequency - a.frequency)
+  }
+  const transitions: JournalRhetoricalTransition[] = []
+  for (const [from, tos] of transitionsMap) {
+    const total = fromCounts.get(from) ?? 0
+    for (const [to, count] of tos) {
+      transitions.push({ from, to, probability: total > 0 ? round2(count / total) : 0 })
+    }
+  }
+  const moves: JournalRhetoricalMoveStat[] = [...allMoveCounts.entries()]
+    .map(([move, count]) => ({ move, frequency: observations.length > 0 ? round2(count / observations.length) : 0 }))
+    .sort((a, b) => b.frequency - a.frequency)
+  return { moves, sectionMoves, transitions }
+}
+
 /**
  * v1.4.1 Corpus-aware Journal Distillation：
  * 每篇论文独立 preprocess / detectSections，再按 canonical section 跨论文聚合。
@@ -580,6 +682,7 @@ export function computeJournalProfileFromDocuments(
 ): JournalProfile {
   const sectionSamples: Array<JournalSectionSample & { docIndex: number }> = []
   const globalSamples: JournalSectionSample[] = []
+  const rhetoricObservations: RhetoricalObservation[] = []
   let parsed = 0
   documents.forEach((doc, docIndex) => {
     try {
@@ -590,12 +693,14 @@ export function computeJournalProfileFromDocuments(
         s.name = canonicalSectionName('unknown')
         s.docIndex = docIndex
         sectionSamples.push(s)
+        rhetoricObservations.push({ section: s.name, moves: detectRhetoricalMoves(view.prose, s.name), docIndex })
       } else {
         for (const sec of sections) {
           const s = computeSectionSample(sec.text) as JournalSectionSample & { docIndex: number }
           s.name = canonicalSectionName(sec.name)
           s.docIndex = docIndex
           sectionSamples.push(s)
+          rhetoricObservations.push({ section: s.name, moves: detectRhetoricalMoves(sec.text, sec.name), docIndex })
         }
       }
       globalSamples.push(computeSectionSample(view.prose))
@@ -613,14 +718,14 @@ export function computeJournalProfileFromDocuments(
       articleType: opts?.articleType,
       discipline: opts?.discipline,
       sampleSize: opts?.sampleSize ?? parsed,
-      profileVersion: '1.5.0',
+      profileVersion: '1.6.0',
       corpusDate: new Date().toISOString().slice(0, 10),
     },
     structure: {
       sections: sectionProfiles,
       sectionLengthDistribution: computeDistribution(sectionLengths),
     },
-    rhetoric: { moves: [] },
+    rhetoric: computeRhetoricProfile(rhetoricObservations),
     epistemics: global.epistemics,
     sentenceStyle: global.sentenceStyle,
     paragraphStyle: global.paragraphStyle,
@@ -656,6 +761,18 @@ function journalFitConfidence(n?: number): JournalFitConfidence {
   if (n < 8) return 'low'
   if (n < 20) return 'medium'
   return 'high'
+}
+
+function lcsLength(a: string[], b: string[]): number {
+  const n = a.length
+  const m = b.length
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0))
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1])
+    }
+  }
+  return dp[n][m]
 }
 
 /** 将当前稿件与目标期刊 Profile 对比，输出 section-level Journal Fit 报告 */
@@ -706,6 +823,32 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
     addMetric('强证据主张比例', cur.strongEvidentialRatio, prof.strongEvidentialRatio, 0.05)
     addMetric('scope 限定主张比例', cur.scopeQualifiedRatio, prof.scopeQualifiedRatio, 0.05)
     addMetric('零结果/否定主张比例', cur.nullFindingRatio, prof.nullFindingRatio, 0.05)
+    // v1.6 Rhetorical Moves
+    const currentMoves = detectRhetoricalMoves(sec.text, sec.name)
+    const profileMoves = profile.rhetoric.sectionMoves?.[name] ?? []
+    const expectedMoves = profileMoves.filter((m) => m.frequency >= 0.3).map((m) => m.move)
+    const moveCoverage = expectedMoves.length > 0
+      ? expectedMoves.filter((m) => currentMoves.includes(m)).length / expectedMoves.length
+      : 1
+    const orderSim = (expectedMoves.length > 0 || currentMoves.length > 0)
+      ? lcsLength(currentMoves, expectedMoves) / Math.max(expectedMoves.length, currentMoves.length)
+      : 1
+    const moveCoverageScore = Math.round(moveCoverage * 100)
+    const orderScore = Math.round(orderSim * 100)
+    metrics.push({
+      metric: 'rhetorical move coverage',
+      current: round2(moveCoverage),
+      expected: 1,
+      score: moveCoverageScore,
+      status: moveCoverageScore >= 80 ? 'ok' : moveCoverageScore >= 55 ? 'warn' : 'diff',
+    })
+    metrics.push({
+      metric: 'rhetorical order fit',
+      current: round2(orderSim),
+      expected: 1,
+      score: orderScore,
+      status: orderScore >= 80 ? 'ok' : orderScore >= 55 ? 'warn' : 'diff',
+    })
     const score = metrics.length > 0 ? Math.round(metrics.reduce((a, m) => a + m.score, 0) / metrics.length) : 0
     fitSections.push({ name: sec.name, score, metrics, articleCount: prof.articleCount })
   }

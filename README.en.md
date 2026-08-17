@@ -194,6 +194,12 @@ neatly**. Seven new deterministic/statistical rules (zero network):
   - `nullFindingRatio`
 - Journal Fit includes these epistemic fingerprint metrics alongside syntactic/citation metrics.
 
+## v1.6 Rhetorical Moves
+
+- Added `detectRhetoricalMoves(text, sectionName)` for zero-LLM move detection.
+- Journal Profile `rhetoric` now includes `sectionMoves` and `transitions`.
+- Journal Fit adds `rhetorical move coverage` and `rhetorical order fit` (LCS-based).
+
 ## Density thresholds (v0.3.3)
 
 Frequency rules use **per-1000-language-unit** density: English rules are normalized by English
