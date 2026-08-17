@@ -63,6 +63,16 @@ Performance decreased on the external cohort, indicating
 limited cross-domain generalization.
 ```
 
+### 输出结构：STYLE / EVIDENCE / JOURNAL
+
+产品输出统一分成三类，用户一眼就知道问题属于哪一层：
+
+| 分类 | 回答的问题 |
+|---|---|
+| **STYLE** | 这句话是不是太 AI？ |
+| **EVIDENCE** | 这句话有没有把 science 改掉？ |
+| **JOURNAL** | 这句话适不适合我要投的期刊？ |
+
 ---
 
 如果你正在寻找：

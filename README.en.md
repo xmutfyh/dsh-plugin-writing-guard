@@ -69,6 +69,16 @@ Performance decreased on the external cohort, indicating
 limited cross-domain generalization.
 ```
 
+### Output structure: STYLE / EVIDENCE / JOURNAL
+
+Product output is grouped into three layers, so users immediately know which problem a finding belongs to:
+
+| Category | Question it answers |
+|---|---|
+| **STYLE** | Is this sentence too AI-sounding? |
+| **EVIDENCE** | Did this sentence change the science? |
+| **JOURNAL** | Is this sentence right for the journal I am targeting? |
+
 ---
 
 The plugin is not a one-shot "humanizer" that rewrites your whole paper after it is done.
