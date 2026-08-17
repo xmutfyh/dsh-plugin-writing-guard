@@ -1733,7 +1733,7 @@ console.log('=== 92. v1.4.1 real-corpus smoke test（D盘裂缝盐析 ESR/source
       for (const e of entries) {
         const full = path.join(dir, e.name)
         if (e.isDirectory()) walkMd(full)
-        else if (/\.md$/i.test(e.name) && sources.length < 5) sources.push(full)
+        else if (/\.md$/i.test(e.name) && !/^readme\.md$/i.test(e.name) && sources.length < 5) sources.push(full)
       }
     }
     // 优先 ESR 文件夹中的 md；不足 3 篇则回退到 readers 下的 source.md
