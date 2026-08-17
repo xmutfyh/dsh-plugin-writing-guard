@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.6.1'
+export const PLUGIN_VERSION = '1.6.2'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -292,6 +292,16 @@ export interface JournalSectionProfile {
   claimCount: Distribution
   /** v1.6.1：claims / 1000 words，用于 Journal Fit（raw count 仅作描述性元数据） */
   claimDensity: Distribution
+  /** v1.6.2：所有 proposition spans / 1000 words（含 procedural/descriptive/unknown） */
+  spanDensity: Distribution
+  /** v1.6.2：明确识别为 scientific claim 的 spans / 1000 words */
+  recognizedClaimDensity: Distribution
+  /** v1.6.2：causalLevel >= 4 的 spans / 1000 words */
+  highCausalDensity: Distribution
+  /** v1.6.2：hedged spans / 1000 words */
+  hedgedClaimDensity: Distribution
+  /** v1.6.2：evidentialLevel >= 4 的 spans / 1000 words */
+  strongEvidentialDensity: Distribution
   highCausalRatio: Distribution
   hedgedClaimRatio: Distribution
   strongEvidentialRatio: Distribution
@@ -319,6 +329,11 @@ export interface JournalProfile {
     moves: JournalRhetoricalMoveStat[]
     /** v1.6：按 canonical section 统计的 rhetorical move 频率 */
     sectionMoves?: Record<string, JournalRhetoricalMoveStat[]>
+    /** v1.6.2：按 canonical section 统计的 move transition（避免 Abstract/Introduction/Discussion 共享 move 时互相污染） */
+    sectionTransitions?: Record<string, JournalRhetoricalTransition[]>
+    /** v1.6.2：每个 section 的 medoid rhetorical sequence（corpus 真实存在的最具代表性顺序） */
+    sectionSequences?: Record<string, JournalRhetoricalSequence>
+    /** 兼容旧版：全局 transitions（由 sectionTransitions 展平） */
     transitions?: JournalRhetoricalTransition[]
   }
   epistemics: {
@@ -329,6 +344,16 @@ export interface JournalProfile {
     // ---------- v1.5 Epistemic Journal Fingerprint ----------
     claimCount?: Distribution
     claimDensity?: Distribution
+    /** v1.6.2：所有 proposition spans / 1000 words */
+    spanDensity?: Distribution
+    /** v1.6.2：明确 scientific claim / 1000 words */
+    recognizedClaimDensity?: Distribution
+    /** v1.6.2：causalLevel >= 4 / 1000 words */
+    highCausalDensity?: Distribution
+    /** v1.6.2：hedged spans / 1000 words */
+    hedgedClaimDensity?: Distribution
+    /** v1.6.2：evidentialLevel >= 4 / 1000 words */
+    strongEvidentialDensity?: Distribution
     highCausalRatio?: Distribution
     hedgedClaimRatio?: Distribution
     strongEvidentialRatio?: Distribution
@@ -357,6 +382,8 @@ export interface JournalProfile {
 
 export interface JournalFitMetric {
   metric: string
+  /** v1.6.2：指标分组（句法结构/语态人称/引用/科学主张/修辞结构），用于分组加权而不是简单平均 */
+  group?: string
   current: number
   expected: number
   p10?: number
@@ -395,6 +422,13 @@ export interface JournalRhetoricalTransition {
   from: string
   to: string
   probability: number
+}
+
+export interface JournalRhetoricalSequence {
+  /** v1.6.2：corpus 中实际存在、且与其他真实序列平均 LCS 相似度最高的序列 */
+  medoid: string[]
+  /** medoid 与其他序列的平均 LCS 相似度（0–1） */
+  meanSimilarity: number
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100
@@ -449,6 +483,11 @@ interface JournalSectionSample {
   // ---------- v1.5 Epistemic Journal Fingerprint ----------
   claimCount: number
   claimDensity: number
+  spanDensity: number
+  recognizedClaimDensity: number
+  highCausalDensity: number
+  hedgedClaimDensity: number
+  strongEvidentialDensity: number
   highCausalRatio: number
   hedgedClaimRatio: number
   strongEvidentialRatio: number
@@ -473,7 +512,9 @@ function canonicalSectionName(name: string): string {
   return n
 }
 
-/** v1.6：轻量 rhetorical move 检测（零 LLM，按句匹配模式，返回去重后的 move 序列） */
+/** v1.6：轻量 rhetorical move 检测（零 LLM，按句匹配模式，返回去重后的 move 序列）
+ *  v1.6.2：修复中文 \b 边界问题；results_discussion 同时支持 Results + Discussion 两套 move。
+ */
 export function detectRhetoricalMoves(text: string, sectionName?: string): string[] {
   const section = (sectionName ?? '').toLowerCase()
   const moves: string[] = []
@@ -482,30 +523,76 @@ export function detectRhetoricalMoves(text: string, sectionName?: string): strin
   }
   const sentences = splitSentences(text)
   const isIntro = section.includes('introduction') || section.includes('background')
+  const isCombined = section.includes('result') && section.includes('discussion')
   const isDiscussion = section.includes('discussion') || section.includes('conclusion')
   const isResults = section.includes('result')
   const isMethods = section.includes('method')
 
+  // 中英文分开写：中文不能放在 \b ... \b 里（JS \b 对 CJK 无效）
+  const introBackgroundEn = /\b(?:in recent years|over the past|has become|is (?:important|critical|essential)|plays? a (?:key|critical|important|major) role|background)\b/i
+  const introBackgroundZh = /(?:随着|近年来|在过去的|变得|具有重要|至关重要|背景)/
+  const introGapEn = /\b(?:however|yet|remains? (?:unclear|poorly understood|unknown)|little is known|few studies|no studies|a gap|limited research)\b/i
+  const introGapZh = /(?:缺乏|尚未|仍然|不足|鲜有|少有|空白)/
+  const introObjectiveEn = /\b(?:this (?:study|paper|work|review) (?:aims?|presents?|proposes?|investigates?|reviews?)|we aim|our aim|the purpose)\b/i
+  const introObjectiveZh = /(?:本文|本研究)(?:旨在|目的是)|我们(?:旨在|试图|拟|希望)/
+  const introMethodEn = /\b(?:we (?:used|applied|developed|proposed|performed)|this (?:study|paper) (?:uses|applies|develops))\b/i
+  const introMethodZh = /(?:本文|我们)(?:采用|使用|提出|构建|基于)/
+
+  const discussionSummaryEn = /\b(?:in summary|in conclusion|taken together|overall)\b/i
+  const discussionSummaryZh = /(?:综上所述|总的来说|总之)/
+  const discussionInterpretEn = /\b(?:suggests?|indicates?|demonstrates?|implies?|shows?)\b/i
+  const discussionInterpretZh = /(?:表明|说明|意味着|支持|证实)/
+  const discussionLimitEn = /\b(?:limitation|limited|caveat|however|should be interpreted)\b/i
+  const discussionLimitZh = /(?:局限|不足|限制|需要谨慎)/
+  const discussionImplicationEn = /\b(?:implication|practical (?:implications?|significance)|important for)\b/i
+  const discussionImplicationZh = /(?:意义|启示|对.*具有重要意义)/
+  const discussionFutureEn = /\b(?:future (?:work|research|studies)|further (?:work|research|studies)|next step)\b/i
+  const discussionFutureZh = /(?:未来|下一步|后续)/
+
+  const resultsFindingEn = /\b(?:we (?:found|observed)|the results (?:show|indicate|demonstrate)|results? (?:shows?|indicate|demonstrate))\b/i
+  const resultsFindingZh = /(?:发现|结果表明|结果显示)/
+  const resultsComparisonEn = /\b(?:compared with|compared to|in contrast|versus)\b/i
+  const resultsComparisonZh = /(?:与.*相比|对比|而)/
+  const resultsUnexpectedEn = /\b(?:surprisingly|unexpectedly|interestingly)\b/i
+  const resultsUnexpectedZh = /(?:值得注意的是|出乎意料)/
+
+  const methodsSetupEn = /\b(?:we (?:used|employed|applied)|this (?:study|work) (?:uses|employs))\b/i
+  const methodsSetupZh = /(?:本文(?:采用|使用)|实验(?:采用|使用)|方法)/
+  const methodsDataEn = /\b(?:data|dataset|samples?|materials?)\b/i
+  const methodsDataZh = /(?:数据|样本|材料)/
+  const methodsAnalysisEn = /\b(?:analysis|analyses|model|simulation)\b/i
+  const methodsAnalysisZh = /(?:统计|分析|模型|模拟)/
+
   for (const s of sentences) {
     if (isIntro) {
-      if (/\b(?:in recent years|over the past|has become|is (?:important|critical|essential)|plays? a (?:key|critical|important|major) role|background|随着|近年来|在过去的|变得|具有重要|至关重要|背景)\b/i.test(s)) pushMove('background')
-      else if (/\b(?:however|yet|remains? (?:unclear|poorly understood|unknown)|little is known|few studies|no studies|a gap|limited research|缺乏|尚未|仍然|不足|鲜有|少有|空白)\b/i.test(s)) pushMove('gap')
-      else if (/\b(?:this (?:study|paper|work|review) (?:aims?|presents?|proposes?|investigates?|reviews?)|we aim|our aim|the purpose|本文|本研究|我们(?:旨在|提出|采用|分析|研究)|目的是)\b/i.test(s)) pushMove('objective')
-      else if (/\b(?:we (?:used|applied|developed|proposed|performed)|this (?:study|paper) (?:uses|applies|develops)|本文(?:采用|使用|提出|基于)|我们(?:使用|采用|提出|构建))\b/i.test(s)) pushMove('method')
+      if (introBackgroundEn.test(s) || introBackgroundZh.test(s)) pushMove('background')
+      else if (introGapEn.test(s) || introGapZh.test(s)) pushMove('gap')
+      else if (introObjectiveEn.test(s) || introObjectiveZh.test(s)) pushMove('objective')
+      else if (introMethodEn.test(s) || introMethodZh.test(s)) pushMove('method')
+    } else if (isCombined) {
+      // Results & Discussion：先识别 Results move，再识别 Discussion move
+      if (resultsFindingEn.test(s) || resultsFindingZh.test(s)) pushMove('finding')
+      else if (resultsComparisonEn.test(s) || resultsComparisonZh.test(s)) pushMove('comparison')
+      else if (resultsUnexpectedEn.test(s) || resultsUnexpectedZh.test(s)) pushMove('unexpected')
+      else if (discussionSummaryEn.test(s) || discussionSummaryZh.test(s)) pushMove('summary')
+      else if (discussionInterpretEn.test(s) || discussionInterpretZh.test(s)) pushMove('interpretation')
+      else if (discussionLimitEn.test(s) || discussionLimitZh.test(s)) pushMove('limitation')
+      else if (discussionImplicationEn.test(s) || discussionImplicationZh.test(s)) pushMove('implication')
+      else if (discussionFutureEn.test(s) || discussionFutureZh.test(s)) pushMove('future')
     } else if (isDiscussion) {
-      if (/\b(?:in summary|in conclusion|taken together|overall|综上所述|总的来说|总之)\b/i.test(s)) pushMove('summary')
-      else if (/\b(?:suggests?|indicates?|demonstrates?|implies?|shows?|表明|说明|意味着|支持|证实)\b/i.test(s)) pushMove('interpretation')
-      else if (/\b(?:limitation|limited|caveat|however|should be interpreted|局限|不足|限制|需要谨慎)\b/i.test(s)) pushMove('limitation')
-      else if (/\b(?:implication|practical (?:implications?|significance)|important for|意义|启示|对.*具有重要意义)\b/i.test(s)) pushMove('implication')
-      else if (/\b(?:future (?:work|research|studies)|further (?:work|research|studies)|next step|未来|下一步|后续)\b/i.test(s)) pushMove('future')
+      if (discussionSummaryEn.test(s) || discussionSummaryZh.test(s)) pushMove('summary')
+      else if (discussionInterpretEn.test(s) || discussionInterpretZh.test(s)) pushMove('interpretation')
+      else if (discussionLimitEn.test(s) || discussionLimitZh.test(s)) pushMove('limitation')
+      else if (discussionImplicationEn.test(s) || discussionImplicationZh.test(s)) pushMove('implication')
+      else if (discussionFutureEn.test(s) || discussionFutureZh.test(s)) pushMove('future')
     } else if (isResults) {
-      if (/\b(?:we (?:found|observed)|the results (?:show|indicate|demonstrate)|results? (?:shows?|indicate|demonstrate)|发现|结果表明|结果显示)\b/i.test(s)) pushMove('finding')
-      else if (/\b(?:compared with|compared to|in contrast|versus|与.*相比|对比|而)\b/i.test(s)) pushMove('comparison')
-      else if (/\b(?:surprisingly|unexpectedly|interestingly|值得注意的是|出乎意料)\b/i.test(s)) pushMove('unexpected')
+      if (resultsFindingEn.test(s) || resultsFindingZh.test(s)) pushMove('finding')
+      else if (resultsComparisonEn.test(s) || resultsComparisonZh.test(s)) pushMove('comparison')
+      else if (resultsUnexpectedEn.test(s) || resultsUnexpectedZh.test(s)) pushMove('unexpected')
     } else if (isMethods) {
-      if (/\b(?:we (?:used|employed|applied)|this (?:study|work) (?:uses|employs)|本文(?:采用|使用)|实验(?:采用|使用)|方法)\b/i.test(s)) pushMove('setup')
-      else if (/\b(?:data|dataset|samples?|materials?|数据|样本|材料)\b/i.test(s)) pushMove('data')
-      else if (/\b(?:analysis|analyses|model|simulation|统计|分析|模型|模拟)\b/i.test(s)) pushMove('analysis')
+      if (methodsSetupEn.test(s) || methodsSetupZh.test(s)) pushMove('setup')
+      else if (methodsDataEn.test(s) || methodsDataZh.test(s)) pushMove('data')
+      else if (methodsAnalysisEn.test(s) || methodsAnalysisZh.test(s)) pushMove('analysis')
     }
   }
   return moves
@@ -523,9 +610,11 @@ function computeSectionSample(text: string): JournalSectionSample {
   const firstPersonSentenceCount = sentences.filter((s) => JOURNAL_FIRST_PERSON_SENTENCE_RE.test(s)).length
   const passiveSentenceCount = sentences.filter((s) => JOURNAL_PASSIVE_SENTENCE_RE.test(s)).length
   // v1.5：复用 ClaimSpan 提取 epistemic fingerprint，不再只数 regex 词频
-  const claims = sentences.flatMap((s) => extractClaimSpans(s))
-  const claimCount = claims.length
-  const ratioOf = (pred: (c: ClaimSpan) => boolean): number => (claimCount > 0 ? round2(claims.filter(pred).length / claimCount) : 0)
+  // v1.6.2：区分 spanDensity（所有 proposition spans）与 recognizedClaimDensity（明确 scientific claim）
+  const spans = sentences.flatMap((s) => extractClaimSpans(s))
+  const claimCount = spans.length
+  const recognizedClaims = spans.filter((c) => c.spanKind === 'claim')
+  const ratioOf = (pred: (c: ClaimSpan) => boolean): number => (claimCount > 0 ? round2(spans.filter(pred).length / claimCount) : 0)
   return {
     name: '',
     words,
@@ -543,6 +632,11 @@ function computeSectionSample(text: string): JournalSectionSample {
     figureTableReferenceDensity: perK((text.match(JOURNAL_FIGURE_TABLE_REFERENCE_RE) ?? []).length),
     claimCount,
     claimDensity: perK(claimCount),
+    spanDensity: perK(claimCount),
+    recognizedClaimDensity: perK(recognizedClaims.length),
+    highCausalDensity: perK(spans.filter((c) => c.causalLevel >= 4).length),
+    hedgedClaimDensity: perK(spans.filter((c) => c.hedged).length),
+    strongEvidentialDensity: perK(spans.filter((c) => c.evidentialLevel >= 4).length),
     highCausalRatio: ratioOf((c) => c.causalLevel >= 4),
     hedgedClaimRatio: ratioOf((c) => c.hedged),
     strongEvidentialRatio: ratioOf((c) => c.evidentialLevel >= 4),
@@ -580,6 +674,11 @@ function aggregateSectionProfiles(samples: Array<JournalSectionSample & { docInd
       figureTableReferenceDensity: computeDistribution(g.samples.map((s) => s.figureTableReferenceDensity)),
       claimCount: computeDistribution(g.samples.map((s) => s.claimCount)),
       claimDensity: computeDistribution(g.samples.map((s) => s.claimDensity)),
+      spanDensity: computeDistribution(g.samples.map((s) => s.spanDensity)),
+      recognizedClaimDensity: computeDistribution(g.samples.map((s) => s.recognizedClaimDensity)),
+      highCausalDensity: computeDistribution(g.samples.map((s) => s.highCausalDensity)),
+      hedgedClaimDensity: computeDistribution(g.samples.map((s) => s.hedgedClaimDensity)),
+      strongEvidentialDensity: computeDistribution(g.samples.map((s) => s.strongEvidentialDensity)),
       highCausalRatio: computeDistribution(g.samples.map((s) => s.highCausalRatio)),
       hedgedClaimRatio: computeDistribution(g.samples.map((s) => s.hedgedClaimRatio)),
       strongEvidentialRatio: computeDistribution(g.samples.map((s) => s.strongEvidentialRatio)),
@@ -613,6 +712,11 @@ function aggregateGlobalSamples(samples: JournalSectionSample[]): {
       hedgeDensity: computeDistribution(samples.map((s) => s.hedgeDensity)),
       claimCount: computeDistribution(samples.map((s) => s.claimCount)),
       claimDensity: computeDistribution(samples.map((s) => s.claimDensity)),
+      spanDensity: computeDistribution(samples.map((s) => s.spanDensity)),
+      recognizedClaimDensity: computeDistribution(samples.map((s) => s.recognizedClaimDensity)),
+      highCausalDensity: computeDistribution(samples.map((s) => s.highCausalDensity)),
+      hedgedClaimDensity: computeDistribution(samples.map((s) => s.hedgedClaimDensity)),
+      strongEvidentialDensity: computeDistribution(samples.map((s) => s.strongEvidentialDensity)),
       highCausalRatio: computeDistribution(samples.map((s) => s.highCausalRatio)),
       hedgedClaimRatio: computeDistribution(samples.map((s) => s.hedgedClaimRatio)),
       strongEvidentialRatio: computeDistribution(samples.map((s) => s.strongEvidentialRatio)),
@@ -648,27 +752,72 @@ function computeRhetoricProfile(observations: RhetoricalObservation[]): JournalP
     for (const m of new Set(obs.moves)) allMoveCounts.set(m, (allMoveCounts.get(m) ?? 0) + 1)
   }
   const sectionMoves: Record<string, JournalRhetoricalMoveStat[]> = {}
-  const transitionsMap = new Map<string, Map<string, number>>()
-  const fromCounts = new Map<string, number>()
+  const sectionTransitions: Record<string, JournalRhetoricalTransition[]> = {}
+  const sectionSequences: Record<string, JournalRhetoricalSequence> = {}
+  // 兼容旧版：全局 transitions（由所有 section 汇总）
+  const globalTransitionsMap = new Map<string, Map<string, number>>()
+  const globalFromCounts = new Map<string, number>()
+
   for (const [section, g] of sectionGroups) {
     const counts = new Map<string, number>()
+    const secTransMap = new Map<string, Map<string, number>>()
+    const secFromCounts = new Map<string, number>()
     for (const seq of g.sequences) {
       for (const m of new Set(seq)) counts.set(m, (counts.get(m) ?? 0) + 1)
       for (let i = 0; i + 1 < seq.length; i++) {
         const from = seq[i]
         const to = seq[i + 1]
-        if (!transitionsMap.has(from)) transitionsMap.set(from, new Map())
-        transitionsMap.get(from)!.set(to, (transitionsMap.get(from)!.get(to) ?? 0) + 1)
-        fromCounts.set(from, (fromCounts.get(from) ?? 0) + 1)
+        if (!secTransMap.has(from)) secTransMap.set(from, new Map())
+        secTransMap.get(from)!.set(to, (secTransMap.get(from)!.get(to) ?? 0) + 1)
+        secFromCounts.set(from, (secFromCounts.get(from) ?? 0) + 1)
+
+        if (!globalTransitionsMap.has(from)) globalTransitionsMap.set(from, new Map())
+        globalTransitionsMap.get(from)!.set(to, (globalTransitionsMap.get(from)!.get(to) ?? 0) + 1)
+        globalFromCounts.set(from, (globalFromCounts.get(from) ?? 0) + 1)
       }
     }
     sectionMoves[section] = [...counts.entries()]
       .map(([move, count]) => ({ move, frequency: g.docs.size > 0 ? round2(count / g.docs.size) : 0 }))
       .sort((a, b) => b.frequency - a.frequency)
+
+    // v1.6.2：section-bound transitions
+    const secTransitions: JournalRhetoricalTransition[] = []
+    for (const [from, tos] of secTransMap) {
+      const total = secFromCounts.get(from) ?? 0
+      for (const [to, count] of tos) {
+        secTransitions.push({ from, to, probability: total > 0 ? round2(count / total) : 0 })
+      }
+    }
+    sectionTransitions[section] = secTransitions
+
+    // v1.6.2：medoid rhetorical sequence——不按频率排序拼顺序，而是选 corpus 中真实存在、
+    // 与其他序列平均 LCS 相似度最高的那条序列作为 canonical order。
+    const seqs = g.sequences
+    if (seqs.length > 0) {
+      let bestIdx = 0
+      let bestSim = -1
+      for (let i = 0; i < seqs.length; i++) {
+        let sum = 0
+        for (let j = 0; j < seqs.length; j++) {
+          const denom = Math.max(seqs[i].length, seqs[j].length, 1)
+          sum += lcsLength(seqs[i], seqs[j]) / denom
+        }
+        const mean = sum / seqs.length
+        if (mean > bestSim) {
+          bestSim = mean
+          bestIdx = i
+        }
+      }
+      sectionSequences[section] = {
+        medoid: [...seqs[bestIdx]],
+        meanSimilarity: round2(bestSim),
+      }
+    }
   }
+
   const transitions: JournalRhetoricalTransition[] = []
-  for (const [from, tos] of transitionsMap) {
-    const total = fromCounts.get(from) ?? 0
+  for (const [from, tos] of globalTransitionsMap) {
+    const total = globalFromCounts.get(from) ?? 0
     for (const [to, count] of tos) {
       transitions.push({ from, to, probability: total > 0 ? round2(count / total) : 0 })
     }
@@ -676,11 +825,9 @@ function computeRhetoricProfile(observations: RhetoricalObservation[]): JournalP
   const moves: JournalRhetoricalMoveStat[] = [...allMoveCounts.entries()]
     .map(([move, count]) => ({ move, frequency: observations.length > 0 ? round2(count / observations.length) : 0 }))
     .sort((a, b) => b.frequency - a.frequency)
-  return { moves, sectionMoves, transitions }
+  return { moves, sectionMoves, sectionTransitions, sectionSequences, transitions }
 }
-
 /**
- * v1.4.1 Corpus-aware Journal Distillation：
  * 每篇论文独立 preprocess / detectSections，再按 canonical section 跨论文聚合。
  * 输出只包含抽象统计特征，不保存论文原句。
  */
@@ -783,6 +930,25 @@ function lcsLength(a: string[], b: string[]): number {
   return dp[n][m]
 }
 
+function journalMetricGroup(metric: string): string {
+  if (metric.includes('句长') || metric.includes('段长') || metric.includes('sentence') || metric.includes('paragraph')) return '句法结构'
+  if (metric.includes('第一人称') || metric.includes('被动') || metric.includes('first person') || metric.includes('passive')) return '语态人称'
+  if (metric.includes('引用') || metric.includes('citation')) return '引用'
+  if (metric.includes('claim') || metric.includes('span') || metric.includes('主张') || metric.includes('scope') || metric.includes('零结果') || metric.includes('hedge') || metric.includes('因果') || metric.includes('证据')) return '科学主张'
+  if (metric.includes('rhetorical') || metric.includes('修辞') || metric.includes('move')) return '修辞结构'
+  return '其他'
+}
+
+/** v1.6.2：Journal Fit 分组权重（避免“哪个模块 metric 多，哪个模块权重就高”的隐式加权） */
+const JOURNAL_FIT_GROUP_WEIGHTS: Record<string, number> = {
+  句法结构: 0.2,
+  语态人称: 0.1,
+  引用: 0.15,
+  科学主张: 0.35,
+  修辞结构: 0.2,
+  其他: 0,
+}
+
 /** 将当前稿件与目标期刊 Profile 对比，输出 section-level Journal Fit 报告 */
 export function auditJournalFit(text: string, profile: JournalProfile): JournalFitReport {
   const view = preprocess(text)
@@ -822,7 +988,13 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
     addMetric('文献引用密度', cur.bibliographicCitationDensity, prof.bibliographicCitationDensity)
     addMetric('图表引用密度', cur.figureTableReferenceDensity, prof.figureTableReferenceDensity)
     // v1.5 Epistemic Journal Fingerprint（v1.6.1 起主分数不再使用旧 regex hedge/causal/evidence 密度）
+    // v1.5 Epistemic Journal Fingerprint（v1.6.2：新增 spanDensity / recognizedClaimDensity / 密度口径）
     addMetric('claim 密度', cur.claimDensity, prof.claimDensity)
+    addMetric('span 密度', cur.spanDensity, prof.spanDensity)
+    addMetric('识别科学主张密度', cur.recognizedClaimDensity, prof.recognizedClaimDensity)
+    addMetric('高因果主张密度', cur.highCausalDensity, prof.highCausalDensity)
+    addMetric('hedge 主张密度', cur.hedgedClaimDensity, prof.hedgedClaimDensity)
+    addMetric('强证据主张密度', cur.strongEvidentialDensity, prof.strongEvidentialDensity)
     addMetric('高因果主张比例', cur.highCausalRatio, prof.highCausalRatio, 0.05)
     addMetric('hedge 主张比例', cur.hedgedClaimRatio, prof.hedgedClaimRatio, 0.05)
     addMetric('强证据主张比例', cur.strongEvidentialRatio, prof.strongEvidentialRatio, 0.05)
@@ -831,7 +1003,12 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
     // v1.6 Rhetorical Moves
     const currentMoves = detectRhetoricalMoves(sec.text, sec.name)
     const profileMoves = profile.rhetoric.sectionMoves?.[name] ?? []
-    const expectedMoves = profileMoves.filter((m) => m.frequency >= 0.3).map((m) => m.move)
+    // v1.6.2：优先使用 medoid sequence（corpus 真实存在的最具代表性顺序），
+    // 不再把 frequency-sorted move list 当作“目标顺序”。
+    const medoidSeq = profile.rhetoric.sectionSequences?.[name]?.medoid
+    const expectedMoves = medoidSeq && medoidSeq.length > 0
+      ? medoidSeq
+      : profileMoves.filter((m) => m.frequency >= 0.3).map((m) => m.move)
     const moveCoverage = expectedMoves.length > 0
       ? expectedMoves.filter((m) => currentMoves.includes(m)).length / expectedMoves.length
       : 1
@@ -854,7 +1031,23 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
       score: orderScore,
       status: orderScore >= 80 ? 'ok' : orderScore >= 55 ? 'warn' : 'diff',
     })
-    const score = metrics.length > 0 ? Math.round(metrics.reduce((a, m) => a + m.score, 0) / metrics.length) : 0
+    // v1.6.2：按指标分组加权，而不是所有 metric 简单平均
+    const groups = new Map<string, number[]>()
+    for (const m of metrics) {
+      const g = journalMetricGroup(m.metric)
+      m.group = g
+      if (!groups.has(g)) groups.set(g, [])
+      groups.get(g)!.push(m.score)
+    }
+    let weightedSum = 0
+    let totalWeight = 0
+    for (const [g, scores] of groups) {
+      const groupAvg = scores.reduce((a, b) => a + b, 0) / scores.length
+      const w = JOURNAL_FIT_GROUP_WEIGHTS[g] ?? 0
+      weightedSum += groupAvg * w
+      totalWeight += w
+    }
+    const score = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 0
     fitSections.push({ name: sec.name, score, metrics, articleCount: prof.articleCount })
   }
 
@@ -1226,10 +1419,18 @@ export function extractClaimSpans(sentence: string): ClaimSpan[] {
     const evidenceStatusMarkers = clause.match(EVIDENCE_STATUS_RE) ?? []
     const hasEpistemic = causalLevel >= 0 || evidentialLevel > 0 || hedged ||
       negationMarkers.length > 0 || nullMarkers.length > 0 || scopeMarkers.length > 0 || evidenceStatusMarkers.length > 0
+    const looksProcedural = /\b(?:used|measured|collected|performed|conducted|applied|employed|implemented|dried|heated|acquired|recorded|obtained|calculated|estimated|simulated|modeled|modelled)\b/i.test(clause)
+    // v1.6.2：方法动作（measured/collected/estimated 等）即使带 evidence-status marker，
+    // 只要没有因果/证据/hedge/否定/scope 等真正的 claim 信号，就不算 recognized scientific claim。
+    const onlyProceduralEvidenceStatus = hasEpistemic && causalLevel < 0 && evidentialLevel === 0 && !hedged &&
+      negationMarkers.length === 0 && nullMarkers.length === 0 && scopeMarkers.length === 0 &&
+      evidenceStatusMarkers.length > 0 && looksProcedural
     let spanKind: ClaimSpanKind = 'unknown'
-    if (hasEpistemic) {
+    if (onlyProceduralEvidenceStatus) {
+      spanKind = 'procedural'
+    } else if (hasEpistemic) {
       spanKind = 'claim'
-    } else if (/\b(?:used|measured|collected|performed|conducted|applied|employed|implemented|dried|heated|acquired|recorded|obtained|calculated|estimated|simulated|modeled|modelled)\b/i.test(clause)) {
+    } else if (looksProcedural) {
       spanKind = 'procedural'
     } else if (/\b(?:figure|table|architecture|schematic|workflow|overview|diagram|example|samples|data)\b/i.test(clause)) {
       spanKind = 'descriptive'

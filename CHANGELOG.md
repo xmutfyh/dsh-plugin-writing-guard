@@ -4,6 +4,32 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-08-17
+
+### Added / Fixed — Rhetorical Semantics Hardening
+
+- **修复中文 Rhetorical Moves 的 `` 边界问题（P0）**：中英文 regex 拆开，中文不再经过 ``，
+  `近年来 / 随着 / 背景 / 缺乏 / 尚未 / 本研究` 等中文 move 现在能正确识别。
+- **Rhetorical order fit 改用 medoid sequence（P0）**：不再把 frequency-sorted move list 当目标顺序；
+  Journal Profile 新增 `sectionSequences.<section>.medoid`，取 corpus 中真实存在且与其他序列平均 LCS
+  相似度最高的序列作为 canonical order。
+- **`results_discussion` 双 move vocabulary（P1）**：combined section 同时支持 Results moves
+  （finding / comparison / unexpected）和 Discussion moves（summary / interpretation / limitation /
+  implication / future）。
+- **transitions 改为 section-bound（P1）**：新增 `sectionTransitions`，避免 Abstract / Introduction /
+  Discussion 共享 move 时互相污染；旧全局 `transitions` 保留兼容。
+- **spanKind 真正进入统计口径（P1）**：新增 `spanDensity`、`recognizedClaimDensity`、
+  `highCausalDensity`、`hedgedClaimDensity`、`strongEvidentialDensity`，区分“所有 proposition spans”
+  与“明确 scientific claim”，并同步进入 Journal Profile / Journal Fit。
+- **Journal Fit 引入分组权重（P1）**：按 句法结构 20% / 语态人称 10% / 引用 15% / 科学主张 35% /
+  修辞结构 20% 分组加权，不再由 metric 数量隐式决定模块权重。
+- `PLUGIN_VERSION` 1.6.1 → 1.6.2。
+
+### Tests
+
+- 新增中文 Introduction 序列、medoid order、results_discussion 双 move、procedural/descriptive
+  不进入 recognized scientific claim、order permutation 等回归测试。
+
 ## [1.6.1] - 2026-08-17
 
 ### Added / Fixed — Semantic Hardening

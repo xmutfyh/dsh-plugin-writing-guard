@@ -1834,6 +1834,51 @@ console.log('=== 94. v1.6.1 Semantic Hardening（epistemic ratio TP/TN + claimDe
 
 
 
+console.log('=== 95. v1.6.2 Rhetorical Semantics Hardening（中文/medoid/results_discussion/spanKind/分组）===')
+{
+  // P0: 中文 rhetorical moves 不能被 \b 吞掉
+  const zhIntro = '近年来，CO2 地质封存受到广泛关注。然而，盐析过程仍缺乏系统认识。本研究旨在定量分析孔隙尺度盐析过程。我们采用微流控实验进行研究。'
+  const zhMoves = detectRhetoricalMoves(zhIntro, 'introduction')
+  check('ZH rhetorical moves background/gap/objective/method', zhMoves.includes('background') && zhMoves.includes('gap') && zhMoves.includes('objective') && zhMoves.includes('method'), JSON.stringify(zhMoves))
+
+  // P1: Results & Discussion 双 move vocabulary
+  const combinedMoves = detectRhetoricalMoves('We found that X increased Y. These results suggest an interpretation. However, limitations exist.', 'Results and Discussion')
+  check('results_discussion dual moves finding/interpretation/limitation', combinedMoves.includes('finding') && combinedMoves.includes('interpretation') && combinedMoves.includes('limitation'), JSON.stringify(combinedMoves))
+
+  // P0: medoid sequence 存在，且正确顺序优于错误顺序
+  const docs = [
+    { text: '# Introduction\n\nIn recent years, CO2 storage has become important. However, little is known. This study aims to quantify.', sourceId: 'a' },
+    { text: '# Introduction\n\nIn recent years, CO2 storage is critical. However, little is known. This study aims to quantify. We used a model.', sourceId: 'b' },
+    { text: '# Introduction\n\nIn recent years, CO2 storage has become important. However, little is known. This study aims to quantify.', sourceId: 'c' },
+  ]
+  const profile = computeJournalProfileFromDocuments(docs, { journal: 'Medoid Test', sampleSize: 3 })
+  const medoid = profile.rhetoric.sectionSequences?.['introduction']?.medoid
+  check('rhetoric medoid sequence exists', Array.isArray(medoid) && medoid.length > 0, JSON.stringify(profile.rhetoric.sectionSequences))
+  check('rhetoric sectionTransitions exists', !!profile.rhetoric.sectionTransitions?.['introduction']?.length, JSON.stringify(profile.rhetoric.sectionTransitions))
+
+  const correctText = '# Introduction\n\nIn recent years, CO2 storage has become important. However, little is known. This study aims to quantify.'
+  const wrongText = '# Introduction\n\nThis study aims to quantify. However, little is known. In recent years, CO2 storage has become important.'
+  const correctReport = auditJournalFit(correctText, profile)
+  const wrongReport = auditJournalFit(wrongText, profile)
+  const correctOrder = correctReport.sections[0]?.metrics.find((m) => m.metric === 'rhetorical order fit')?.score ?? 0
+  const wrongOrder = wrongReport.sections[0]?.metrics.find((m) => m.metric === 'rhetorical order fit')?.score ?? 0
+  check('rhetorical order fit: correct > wrong', correctOrder > wrongOrder, `correct=${correctOrder} wrong=${wrongOrder}`)
+
+  // P1: spanKind 不再把 procedural/descriptive 当成 recognized scientific claim
+  const proc = extractClaimSpans('We collected samples and measured temperature.')
+  const procProfile = computeJournalProfileFromDocuments([{ text: '# Methods\n\nWe collected samples and measured temperature.', sourceId: 's' }], { journal: 'SpanKind' }).structure.sections.find((s) => s.name === 'methods')
+  check('spanKind procedural recognized', proc.some((s) => s.spanKind === 'procedural'), JSON.stringify(proc.map((s) => s.spanKind)))
+  check('recognizedClaimDensity excludes procedural', procProfile && procProfile.recognizedClaimDensity.median === 0, JSON.stringify(procProfile?.recognizedClaimDensity))
+  check('spanDensity includes all spans', procProfile && procProfile.spanDensity.median > 0, JSON.stringify(procProfile?.spanDensity))
+
+  // P1: Journal Fit metrics carry group and use grouped weighting
+  const fitReport = auditJournalFit(correctText, profile)
+  const fitSec = fitReport.sections[0]
+  check('journal fit metrics have group', !!fitSec && fitSec.metrics.some((m) => m.group), JSON.stringify(fitSec?.metrics.map((m) => [m.metric, m.group])))
+}
+
+
+
 
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
