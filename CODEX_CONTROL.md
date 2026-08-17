@@ -18,7 +18,7 @@
 - 最终回复会写到 `.codex-last-message.md`。
 - 建议先 `git diff` 审查 Codex 的改动，再提交。
 
-## 当前仓库状态（截至 v1.4.1）
+## 当前仓库状态（截至 v1.4.2）
 
 - 已实现：
   - Journal Profile 蒸馏、`writing_journal_profile`、`writing_audit(journalProfile=...)`
@@ -26,7 +26,9 @@
   - **v1.4.1 Corpus-aware Journal Distillation**：`computeJournalProfileFromDocuments`、
     逐篇解析、canonical section 聚合、所有指标 Distribution、引用密度入 Fit、
     被动语态不规则过去分词增强
-- 测试：`npm test` = 291 通过 / 0 失败（含 D 盘真实 `source.md` smoke test）。
+  - **v1.4.2 Journal Fit hardening**：CI-safe 真实语料测试、ratio 评分修复、
+    文献/图表引用拆分、Journal Fit Confidence、canonical aliases 扩充
+- 测试：`npm test` = 293 通过 / 0 失败（本地 ESR/source.md smoke test；CI 无语料时自动 SKIP）。
 - 下一步候选（来自 `C:\Users\fyh\Desktop\分析.md`）：
   1. Epistemic Journal Fingerprint（复用 `extractClaimSpans`，输出 causal/evidence 等级分布）
   2. Rhetorical Move 分析（Introduction move 序列）

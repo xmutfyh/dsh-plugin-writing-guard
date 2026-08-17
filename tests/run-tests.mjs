@@ -1666,7 +1666,7 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.4.1' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.4.2' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
   check('journal profile preserves only statistics', profile.rhetoric.moves.length === 0 && !JSON.stringify(profile).includes('This study investigates'))
@@ -1697,6 +1697,7 @@ console.log('=== 90. v1.4 Journal Fit 审计（auditJournalFit / writing_audit j
   check('journal fit attached to report', !!report.journalFit && report.journalFit.journal === 'Test Journal' && report.journalFit.sections.length > 0)
   check('journal fit scores in range', report.journalFit.sections.every((s) => s.score >= 0 && s.score <= 100))
   check('journal fit format includes block', formatReport(report, { verbose: true }).includes('期刊写作契合度（Journal Fit · Test Journal）'))
+  check('journal fit has confidence/corpusSize', !!report.journalFit && !!report.journalFit.confidence && report.journalFit.corpusSize > 0, JSON.stringify(report.journalFit && { confidence: report.journalFit.confidence, corpusSize: report.journalFit.corpusSize }))
 
   const withLimits = manuscript + '\n\n# Limitations\n\nThis study has some limitations. The sample size is small. Further work is needed.'
   const report2 = auditText(withLimits, { profile: 'manuscript', journalProfile: profile })
@@ -1712,49 +1713,54 @@ console.log('=== 91. v1.4.1 corpus-aware aggregation（多篇同名校验）==='
   check('corpus results count/articleCount', results && results.articleCount === 3 && results.sentenceLength.count === 3, JSON.stringify(results))
   check('corpus results median is aggregate (20, not 30)', results && results.sentenceLength.median === 20, JSON.stringify(results?.sentenceLength))
   check('corpus sampleSize', profile.metadata.sampleSize === 3, JSON.stringify(profile.metadata.sampleSize))
+  check('corpus profile has split citation distributions', !!results && !!results.bibliographicCitationDensity && !!results.figureTableReferenceDensity && results.bibliographicCitationDensity.count === 3 && results.figureTableReferenceDensity.count === 3, JSON.stringify(results && { bib: results.bibliographicCitationDensity, fig: results.figureTableReferenceDensity }))
 }
 
-console.log('=== 92. v1.4.1 real-corpus smoke test（D盘裂缝盐析 ESR/source.md）===')
+console.log('=== 92. v1.4.2 real-corpus smoke test（CI 可跳过，本地 ESR/source.md 或 WRITING_GUARD_REAL_CORPUS）===')
 {
   const esrRoot = 'D:\\裂缝盐析\\00_raw\\ESR论文'
   const readerRoot = 'D:\\裂缝盐析\\01_literature\\readers'
-  const candidates = [esrRoot, readerRoot].filter((r) => fs.existsSync(r))
-  if (candidates.length === 0) {
-    check('real-corpus directory exists', false, `missing ESR/readers roots`)
+  const envCorpus = process.env.WRITING_GUARD_REAL_CORPUS
+
+  const collectMd = (dir, sources, wantSourceMd) => {
+    let entries = []
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) collectMd(full, sources, wantSourceMd)
+      else if (sources.length < 5) {
+        const isMd = /\.md$/i.test(e.name) && !/^readme\.md$/i.test(e.name)
+        const isSource = wantSourceMd ? e.name === 'source.md' : isMd
+        if (isSource) sources.push(full)
+      }
+    }
+  }
+
+  let sources = []
+  if (envCorpus && fs.existsSync(envCorpus)) {
+    collectMd(envCorpus, sources, false)
   } else {
-    const sources = []
-    const walkMd = (dir) => {
-      let entries = []
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true })
-      } catch {
-        return
-      }
-      for (const e of entries) {
-        const full = path.join(dir, e.name)
-        if (e.isDirectory()) walkMd(full)
-        else if (/\.md$/i.test(e.name) && !/^readme\.md$/i.test(e.name) && sources.length < 5) sources.push(full)
+    const candidates = [esrRoot, readerRoot].filter((r) => fs.existsSync(r))
+    if (candidates.length === 0) {
+      console.log('SKIP real-corpus smoke test: local corpus unavailable (CI safe)')
+    } else {
+      // 优先 ESR 文件夹中的 md；不足 3 篇则回退到 readers 下的 source.md
+      collectMd(esrRoot, sources, false)
+      if (sources.length < 3) {
+        sources = []
+        collectMd(readerRoot, sources, true)
       }
     }
-    // 优先 ESR 文件夹中的 md；不足 3 篇则回退到 readers 下的 source.md
-    walkMd(esrRoot)
-    if (sources.length < 3) {
-      sources.length = 0
-      const walkSource = (dir) => {
-        let entries = []
-        try {
-          entries = fs.readdirSync(dir, { withFileTypes: true })
-        } catch {
-          return
-        }
-        for (const e of entries) {
-          const full = path.join(dir, e.name)
-          if (e.isDirectory()) walkSource(full)
-          else if (e.name === 'source.md' && sources.length < 5) sources.push(full)
-        }
-      }
-      walkSource(readerRoot)
-    }
+  }
+
+  if (sources.length === 0) {
+    // 没有本地语料时直接跳过，不让 CI 失败
+    console.log('SKIP real-corpus smoke test: no corpus files found')
+  } else {
     const docs = sources.slice(0, 5).map((f) => ({ text: fs.readFileSync(f, 'utf8'), sourceId: path.basename(path.dirname(f)) }))
     check('real-corpus found md files', docs.length >= 3, `found ${docs.length} from ${sources.join(', ')}`)
     if (docs.length >= 3) {

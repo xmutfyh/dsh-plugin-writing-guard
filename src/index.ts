@@ -289,7 +289,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       '命中带性质标签（INVARIANT/VIOLATION/CANDIDATE/ADVISORY）：INVARIANT=科学不变量被改动，CANDIDATE=防御性候选（可能承担正当边界，勿自动删除）。' +
       '版本差距过大（全文重写）时自动降级为 version-gap 提示，避免行级对比噪音。' +
       'v1.3 篇章统计层：段落节奏（碎片化/拥塞/过度整齐）、句长节奏均匀（局部 run + 作者历史 std 对比）、重复逻辑脚手架（首先其次最后/第一第二第三跨段落复用）、标点脚手架过载（括号/冒号/分号/引号/破折号同句聚集）、自创框架词（XX化/XX力/A-B-C 短线）、空泛判断（多弱信号组合）与本地引用完整性（filePath 同目录存在 .bib 时自动检查 \\cite key ↔ .bib、\\ref ↔ \\label、条目缺字段、DOI 重复）。' +
-      'v1.4.1 期刊写作引擎（corpus-aware）：传 journalProfile=Journal Profile JSON（由 writing_journal_profile 生成）开启 section-level Journal Fit 审计（句长/段长/hedge/因果力/证据力/第一人称/被动语态/引用密度 vs 目标期刊分布）。' +
+      'v1.4.2 期刊写作引擎（corpus-aware）：传 journalProfile=Journal Profile JSON（由 writing_journal_profile 生成）开启 section-level Journal Fit 审计（句长/段长/hedge/因果力/证据力/第一人称/被动语态/文献引用/图表引用 vs 目标期刊分布，含 Profile Confidence）。' +
       '输入 text 或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。' +
       `（dsh-plugin-writing-guard v${PLUGIN_VERSION}）`,
     parameters: {
@@ -300,7 +300,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       projectResidueTerms: { type: 'array', items: { type: 'string' }, description: '临时追加的项目内部词表（仅本次调用生效；命中按 medium 报；持久配置见插件 config.projectResidueTerms）' },
       original: { type: 'string', description: 'v0.6/v0.8 修改前的原文。提供后开启 Scholarship Lock（数字/百分数/p 值/CI/引用/图表编号/DOI 对比，变化按 HIGH 报）+ Epistemic Lock（主张强度漂移/否定与零结果翻转/scope 边界消失）——语言润色不应改变科研事实' },
       styleProfile: { type: 'string', description: 'v0.6/v1.3 Author Style Profile：作者历史风格档案 JSON（由 writing_style_profile 生成，含句长/段长节奏指纹）。提供后检测句长分布偏离（median 漂移 + std/CV 整齐度对比，v1.3）' },
-      journalProfile: { type: 'string', description: 'v1.4.1 Journal Profile：目标期刊写作档案 JSON（由 writing_journal_profile 生成，含章节句长/段长/hedge/因果力/证据力/第一人称/被动语态/引用密度分布）。提供后输出 section-level Journal Fit 报告' },
+      journalProfile: { type: 'string', description: 'v1.4.2 Journal Profile：目标期刊写作档案 JSON（由 writing_journal_profile 生成，含章节句长/段长/hedge/因果力/证据力/第一人称/被动语态/文献引用/图表引用分布）。提供后输出 section-level Journal Fit 报告与 Profile Confidence' },
     },
     output: {
       schema: { type: 'string' },
@@ -432,7 +432,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.tools.register(defineTool({
     name: 'writing_journal_profile',
     description:
-      'v1.4.1 Journal Profile：从多篇目标期刊代表论文（.md/.tex/.txt）逐篇独立蒸馏"期刊写作档案"——每个章节跨论文聚合的句长/段长分布、hedge/因果力/证据力/第一人称/被动语态/引用密度分布。' +
+      'v1.4.2 Journal Profile：从多篇目标期刊代表论文（.md/.tex/.txt）逐篇独立蒸馏"期刊写作档案"——每个章节跨论文聚合的句长/段长/hedge/因果力/证据力/第一人称/被动语态/文献引用/图表引用分布。' +
       '输出的是抽象统计分布（不保存论文原句），零网络零 LLM，纯本地统计。' +
       '用法：对目标期刊的代表论文目录/文件调用本工具得到 profile JSON，' +
       '再在 writing_audit 的 journalProfile 参数传入该 JSON，即可对当前稿件输出 section-level Journal Fit（契合度百分比 + 主要差异）。' +

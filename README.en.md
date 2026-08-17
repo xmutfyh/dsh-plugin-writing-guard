@@ -174,6 +174,14 @@ neatly**. Seven new deterministic/statistical rules (zero network):
 - Journal Fit now includes citation density and no longer fakes scalar values as distributions.
 - Passive-voice detection now includes common irregular participles (`shown`, `found`, `given`, `seen`, `known`, `taken`, `made`, etc.).
 
+## v1.4.2 Journal Fit hardening
+
+- **CI-safe real-corpus tests**: local corpus tests are skipped when no corpus is available; use `WRITING_GUARD_REAL_CORPUS` to point at a private corpus.
+- **Ratio scoring fix**: first-person/passive ratios use `minSpread=0.05`, so 10% vs 90% is no longer treated as OK.
+- **Citation split**: `bibliographicCitationDensity` and `figureTableReferenceDensity` are now separate distributions and separate Journal Fit metrics.
+- **Journal Fit Confidence**: reports include `confidence` (very_low/low/medium/high) and `corpusSize`.
+- **More canonical aliases**: `materials & methods`, `experimental methods`, `modeling/modelling`, `summary`, `results and discussion`, `background`, etc.
+
 ## Density thresholds (v0.3.3)
 
 Frequency rules use **per-1000-language-unit** density: English rules are normalized by English

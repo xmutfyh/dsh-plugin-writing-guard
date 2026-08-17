@@ -4,7 +4,28 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-08-17
+
+### Added / Fixed — Journal Fit engineering hardening
+
+- **CI 真实语料解耦（P0）**: real-corpus smoke test 在本地语料不存在时自动 SKIP，不再让 GitHub
+  Actions / npm publish 因缺少 `D:\裂缝盐析` 而失败；支持 `WRITING_GUARD_REAL_CORPUS` 环境变量指定语料目录。
+- **Ratio 型指标评分修复（P1）**: `journalMetricScore` 增加 `minSpread`，第一人称/被动语态等 0–1
+  比例指标使用 `minSpread=0.05`，避免 10% vs 90% 仍被误判为 ok。
+- **引用密度拆分（P1）**: Journal Profile 新增 `bibliographicCitationDensity` 与
+  `figureTableReferenceDensity` 两个独立分布；Journal Fit 分别输出“文献引用密度”和“图表引用密度”。
+- **Journal Fit Confidence（P1）**: 报告新增 `confidence`（very_low/low/medium/high）与
+  `corpusSize`；formatReport 显示 Profile Confidence 和每个 section 的 `n=` 覆盖数。
+- **Canonical section aliases 扩充（P2）**: `materials & methods`、`experimental methods`、
+  `modeling/modelling`、`summary`、`results and discussion`、`background` 等常见别名归一化。
+- `PLUGIN_VERSION` 1.4.1 → 1.4.2。
+
+### Tests
+
+- 291 → 293: Journal Fit confidence/corpusSize、split citation distributions。
+
 ## [1.4.1] - 2026-08-17
+
 
 ### Fixed / Added — Corpus-aware Journal Distillation
 
