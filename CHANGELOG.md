@@ -4,7 +4,34 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-08-17
+
+### Fixed / Added — Corpus-aware Journal Distillation
+
+- **`computeJournalProfileFromDocuments(documents, opts)`**: 新增多论文聚合入口。每篇论文独立
+  `preprocess` / `detectSections`，不再 `chunks.join("
+
+")` 后当作一篇超长文档。
+- **Canonical section mapping**: `method / methods / methodology / materials and methods` → `methods`；
+  `conclusion / conclusions` → `conclusion`。
+- **`JournalSectionProfile` 全部指标升级为 `Distribution`**: `sentenceLength` / `paragraphLength` /
+  `hedgeDensity` / `causalForce` / `evidentialForce` / `firstPersonUsage` / `passiveVoice` /
+  `citationDensity` 都保存跨论文聚合后的分布；新增 `articleCount`。
+- **`auditJournalFit()` 修复**: 删除 scalar 伪装 Distribution 的临时逻辑，所有指标直接使用真实
+  Distribution 打分；新增 **引用密度** 进入 Journal Fit。
+- **`writing_journal_profile`**: 按 `JournalDocument[]` 读取每篇论文，并正确写入
+  `metadata.sampleSize = documents.length`。
+- **被动语态检测增强**: 补充 `shown / found / given / seen / known / taken / made / used /
+  considered / observed / measured / performed / conducted / calculated / estimated / simulated /
+  modeled / modelled / reported / detected / described / discussed / presented` 等常用过去分词。
+- `PLUGIN_VERSION` 1.4.0 → 1.4.1。
+
+### Tests
+
+- 284 → 291: sections 91–92（corpus-aware 三篇 Results 中位数聚合、D盘真实 source.md smoke test）。
+
 ## [1.4.0] - 2026-08-17
+
 
 ### Added — Journal Engine（期刊写作蒸馏与 Journal Fit，DSH Scientific Writing Guard 基础层）
 

@@ -4,8 +4,10 @@
  * 目标：每条核心规则至少有一个 true-positive 和一个 true-negative 断言。
  * 运行：node tests/run-tests.mjs
  */
-import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, computeJournalProfile, auditJournalFit, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
+import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, computeJournalProfile, computeJournalProfileFromDocuments, auditJournalFit, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
 import { isPaperFile, baselineByteSize, pruneBaselines } from '../lib/index.js'
+import fs from 'node:fs'
+import path from 'node:path'
 
 let pass = 0
 let fail = 0
@@ -1664,7 +1666,7 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.4.0' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.4.1' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
   check('journal profile preserves only statistics', profile.rhetoric.moves.length === 0 && !JSON.stringify(profile).includes('This study investigates'))
@@ -1700,6 +1702,71 @@ console.log('=== 90. v1.4 Journal Fit 审计（auditJournalFit / writing_audit j
   const report2 = auditText(withLimits, { profile: 'manuscript', journalProfile: profile })
   check('journal fit warns on missing profile section', report2.journalFit?.warnings.some((w) => w.toLowerCase().includes('limitations')) ?? false, JSON.stringify(report2.journalFit?.warnings))
 }
+
+console.log('=== 91. v1.4.1 corpus-aware aggregation（多篇同名校验）===')
+{
+  const mk = (n) => `# Results\n\n${Array(n).fill('word').join(' ')}.`
+  const docs = [10, 20, 30].map((n) => ({ text: mk(n), sourceId: `paper-${n}` }))
+  const profile = computeJournalProfileFromDocuments(docs, { journal: 'Corpus Test' })
+  const results = profile.structure.sections.find((s) => s.name === 'results')
+  check('corpus results count/articleCount', results && results.articleCount === 3 && results.sentenceLength.count === 3, JSON.stringify(results))
+  check('corpus results median is aggregate (20, not 30)', results && results.sentenceLength.median === 20, JSON.stringify(results?.sentenceLength))
+  check('corpus sampleSize', profile.metadata.sampleSize === 3, JSON.stringify(profile.metadata.sampleSize))
+}
+
+console.log('=== 92. v1.4.1 real-corpus smoke test（D盘裂缝盐析 ESR/source.md）===')
+{
+  const esrRoot = 'D:\\裂缝盐析\\00_raw\\ESR论文'
+  const readerRoot = 'D:\\裂缝盐析\\01_literature\\readers'
+  const candidates = [esrRoot, readerRoot].filter((r) => fs.existsSync(r))
+  if (candidates.length === 0) {
+    check('real-corpus directory exists', false, `missing ESR/readers roots`)
+  } else {
+    const sources = []
+    const walkMd = (dir) => {
+      let entries = []
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const e of entries) {
+        const full = path.join(dir, e.name)
+        if (e.isDirectory()) walkMd(full)
+        else if (/\.md$/i.test(e.name) && sources.length < 5) sources.push(full)
+      }
+    }
+    // 优先 ESR 文件夹中的 md；不足 3 篇则回退到 readers 下的 source.md
+    walkMd(esrRoot)
+    if (sources.length < 3) {
+      sources.length = 0
+      const walkSource = (dir) => {
+        let entries = []
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true })
+        } catch {
+          return
+        }
+        for (const e of entries) {
+          const full = path.join(dir, e.name)
+          if (e.isDirectory()) walkSource(full)
+          else if (e.name === 'source.md' && sources.length < 5) sources.push(full)
+        }
+      }
+      walkSource(readerRoot)
+    }
+    const docs = sources.slice(0, 5).map((f) => ({ text: fs.readFileSync(f, 'utf8'), sourceId: path.basename(path.dirname(f)) }))
+    check('real-corpus found md files', docs.length >= 3, `found ${docs.length} from ${sources.join(', ')}`)
+    if (docs.length >= 3) {
+      const profile = computeJournalProfileFromDocuments(docs, { journal: 'D-Literature Smoke', sampleSize: docs.length })
+      check('real-corpus sampleSize', profile.metadata.sampleSize === docs.length, JSON.stringify(profile.metadata.sampleSize))
+      check('real-corpus has aggregated sections', profile.structure.sections.length > 0, JSON.stringify(profile.structure.sections.map((s) => s.name)))
+      const results = profile.structure.sections.find((s) => s.name === 'results')
+      check('real-corpus results distribution when present', !results || results.sentenceLength.count > 0, JSON.stringify(results?.sentenceLength))
+    }
+  }
+}
+
 
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)

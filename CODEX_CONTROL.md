@@ -18,18 +18,23 @@
 - 最终回复会写到 `.codex-last-message.md`。
 - 建议先 `git diff` 审查 Codex 的改动，再提交。
 
-## 当前仓库状态（截至 v1.4.0）
+## 当前仓库状态（截至 v1.4.1）
 
-- 已实现：Journal Profile 蒸馏、`writing_journal_profile`、`writing_audit(journalProfile=...)`、
-  Journal Fit section-level 报告、中文 Claim Anchor CJK bigram。
-- 测试：`npm test` = 284 通过 / 0 失败。
+- 已实现：
+  - Journal Profile 蒸馏、`writing_journal_profile`、`writing_audit(journalProfile=...)`
+  - Journal Fit section-level 报告、中文 Claim Anchor CJK bigram
+  - **v1.4.1 Corpus-aware Journal Distillation**：`computeJournalProfileFromDocuments`、
+    逐篇解析、canonical section 聚合、所有指标 Distribution、引用密度入 Fit、
+    被动语态不规则过去分词增强
+- 测试：`npm test` = 291 通过 / 0 失败（含 D 盘真实 `source.md` smoke test）。
 - 下一步候选（来自 `C:\Users\fyh\Desktop\分析.md`）：
-  1. Rhetorical Move 分析（Introduction move 序列）
-  2. Journal Fingerprint 可视化
-  3. 自动 PDF 蒸馏（Profile Builder）
-  4. 社区 Journal Profile 仓库
-  5. LaTeX Project-aware Audit（跨文件 `\input` / `\include` / `.bib` 图）
-  6. WritingGuardBench 公开 benchmark
+  1. Epistemic Journal Fingerprint（复用 `extractClaimSpans`，输出 causal/evidence 等级分布）
+  2. Rhetorical Move 分析（Introduction move 序列）
+  3. Journal Fingerprint 可视化
+  4. 自动 PDF 蒸馏（Profile Builder）
+  5. 社区 Journal Profile 仓库
+  6. LaTeX Project-aware Audit（跨文件 `\input` / `\include` / `.bib` 图）
+  7. WritingGuardBench 公开 benchmark
 
 ## 安全注意
 

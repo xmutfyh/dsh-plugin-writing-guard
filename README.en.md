@@ -163,6 +163,17 @@ neatly**. Seven new deterministic/statistical rules (zero network):
 | **`computeJournalProfile` / `auditJournalFit`** | exported pure functions for tests and other DSH tools |
 | **priority rule** | Scientific Invariant > Epistemic Safety > Journal Requirement > Journal Norm > Journal Style; journal style can never override scientific integrity |
 
+## v1.4.1 Corpus-aware Journal Distillation
+
+> Fixes the P0 where multiple papers were joined into one text and same-named sections overwrote each other.
+> Each document is now parsed independently and aggregated by canonical section across documents.
+
+- Added `computeJournalProfileFromDocuments(documents, opts)`; `writing_journal_profile` reads each file as a separate `JournalDocument`.
+- `JournalSectionProfile` metrics are all `Distribution` now, with a new `articleCount`.
+- Canonical section mapping: `method/methods/methodology/materials and methods → methods`, `conclusion/conclusions → conclusion`.
+- Journal Fit now includes citation density and no longer fakes scalar values as distributions.
+- Passive-voice detection now includes common irregular participles (`shown`, `found`, `given`, `seen`, `known`, `taken`, `made`, etc.).
+
 ## Density thresholds (v0.3.3)
 
 Frequency rules use **per-1000-language-unit** density: English rules are normalized by English

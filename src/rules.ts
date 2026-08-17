@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.4.0'
+export const PLUGIN_VERSION = '1.4.1'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -265,19 +265,25 @@ export interface Distribution {
 }
 
 /** 单个章节的写作特征画像 */
+export interface JournalDocument {
+  text: string
+  sourceId?: string
+  year?: number
+  articleType?: string
+}
+
+/** 单个章节的写作特征画像（v1.4.1：所有指标均为跨论文聚合后的 Distribution） */
 export interface JournalSectionProfile {
   name: string
-  paragraphs: number
-  sentences: number
-  words: number
+  articleCount: number
   sentenceLength: Distribution
   paragraphLength: Distribution
-  hedgeDensity: number
-  causalForce: number
-  evidenceForce: number
-  firstPersonRatio: number
-  passiveRatio: number
-  citationDensity: number
+  hedgeDensity: Distribution
+  causalForce: Distribution
+  evidentialForce: Distribution
+  firstPersonUsage: Distribution
+  passiveVoice: Distribution
+  citationDensity: Distribution
 }
 
 /** v1.4 Journal Profile：从目标期刊代表论文蒸馏出的写作特征（不保存原句，只保存统计规律） */
@@ -371,10 +377,35 @@ const JOURNAL_HEDGE_RE = /\b(?:may|might|could|possibly|potentially|perhaps)\b/g
 const JOURNAL_CAUSAL_RE = /\b(?:causes?|caused?|leads? to|resulted? in|contributes? to|affects?|affect|predicts?|associated with)\b/gi
 const JOURNAL_EVIDENCE_RE = /\b(?:suggest|suggests|suggested|indicate|indicates|indicated|support|supports|supported|show|shows|showed|demonstrate|demonstrates|demonstrated|establish|establishes|established|confirm|confirms|confirmed|prove|proves|proved)\b/gi
 const JOURNAL_FIRST_PERSON_RE = /\b(?:we|our|I)\b/gi
-const JOURNAL_PASSIVE_RE = /\b(?:is|are|was|were|been|being)\s+\w+ed\b/gi
+const JOURNAL_FIRST_PERSON_SENTENCE_RE = /\b(?:we|our|I)\b/i
+const JOURNAL_PASSIVE_RE = /\b(?:is|are|was|were|been|being)\s+(?:\w+ed|shown|found|given|seen|known|taken|made|used|considered|observed|measured|performed|conducted|calculated|estimated|simulated|modeled|modelled|reported|detected|described|discussed|presented)\b/gi
+const JOURNAL_PASSIVE_SENTENCE_RE = /\b(?:is|are|was|were|been|being)\s+(?:\w+ed|shown|found|given|seen|known|taken|made|used|considered|observed|measured|performed|conducted|calculated|estimated|simulated|modeled|modelled|reported|detected|described|discussed|presented)\b/i
 const JOURNAL_CITATION_RE = /\\cite(?:\[[^\]]*\])?\{[^{}]*\}|\b(?:Figure|Table|Fig\.?)\s*\d+\b|\[\d+(?:[,-]\d+)*\]|\([^)]*(?:et al\.|\d{4})[^)]*\)/gi
 
-function computeSectionProfile(text: string): JournalSectionProfile {
+interface JournalSectionSample {
+  name: string
+  docIndex?: number
+  words: number
+  sentenceLengthMedian: number
+  sentenceLengthStd: number
+  paragraphLengthMedian: number
+  paragraphLengthStd: number
+  hedgeDensity: number
+  causalForce: number
+  evidentialForce: number
+  firstPersonSentenceRatio: number
+  passiveSentenceRatio: number
+  citationDensity: number
+}
+
+function canonicalSectionName(name: string): string {
+  const n = name.trim().toLowerCase()
+  if (n === 'method' || n === 'methods' || n === 'methodology' || n === 'materials and methods') return 'methods'
+  if (n === 'conclusion' || n === 'conclusions') return 'conclusion'
+  return n
+}
+
+function computeSectionSample(text: string): JournalSectionSample {
   const sentences = splitSentences(text)
   const sentenceLengths = sentences.map((s) => countWords(s))
   const paragraphs = text
@@ -383,52 +414,128 @@ function computeSectionProfile(text: string): JournalSectionProfile {
     .filter((n) => n > 0)
   const words = countWords(text)
   const perK = (n: number): number => (words > 0 ? round2((n / words) * 1000) : 0)
+  const firstPersonSentenceCount = sentences.filter((s) => JOURNAL_FIRST_PERSON_SENTENCE_RE.test(s)).length
+  const passiveSentenceCount = sentences.filter((s) => JOURNAL_PASSIVE_SENTENCE_RE.test(s)).length
   return {
     name: '',
-    paragraphs: paragraphs.length,
-    sentences: sentences.length,
     words,
-    sentenceLength: computeDistribution(sentenceLengths),
-    paragraphLength: computeDistribution(paragraphs),
+    sentenceLengthMedian: medianOf(sentenceLengths),
+    sentenceLengthStd: stdOf(sentenceLengths),
+    paragraphLengthMedian: medianOf(paragraphs),
+    paragraphLengthStd: stdOf(paragraphs),
     hedgeDensity: perK((text.match(JOURNAL_HEDGE_RE) ?? []).length),
     causalForce: perK((text.match(JOURNAL_CAUSAL_RE) ?? []).length),
-    evidenceForce: perK((text.match(JOURNAL_EVIDENCE_RE) ?? []).length),
-    firstPersonRatio: sentences.length > 0 ? round2(((text.match(JOURNAL_FIRST_PERSON_RE) ?? []).length) / sentences.length) : 0,
-    passiveRatio: sentences.length > 0 ? round2(((text.match(JOURNAL_PASSIVE_RE) ?? []).length) / sentences.length) : 0,
+    evidentialForce: perK((text.match(JOURNAL_EVIDENCE_RE) ?? []).length),
+    firstPersonSentenceRatio: sentences.length > 0 ? round2(firstPersonSentenceCount / sentences.length) : 0,
+    passiveSentenceRatio: sentences.length > 0 ? round2(passiveSentenceCount / sentences.length) : 0,
     citationDensity: perK((text.match(JOURNAL_CITATION_RE) ?? []).length),
   }
 }
 
-/**
- * 从目标期刊代表论文语料蒸馏 Journal Profile。
- * 输入可以是一篇或多篇代表论文的拼接文本；输出只包含抽象统计特征，不保存论文原句。
- */
-export function computeJournalProfile(text: string, opts?: { journal?: string; articleType?: string; discipline?: string; sampleSize?: number }): JournalProfile {
-  const view = preprocess(text)
-  const sections = detectSections(view)
-  const sectionProfiles: JournalSectionProfile[] = sections.map((sec) => {
-    const p = computeSectionProfile(sec.text)
-    p.name = sec.name.toLowerCase()
-    return p
-  })
-  if (sectionProfiles.length === 0) {
-    const p = computeSectionProfile(view.prose)
-    p.name = 'unknown'
-    sectionProfiles.push(p)
+function aggregateSectionProfiles(samples: Array<JournalSectionSample & { docIndex: number }>): JournalSectionProfile[] {
+  const groups = new Map<string, { docs: Set<number>; samples: JournalSectionSample[] }>()
+  for (const s of samples) {
+    const key = s.name.toLowerCase()
+    let g = groups.get(key)
+    if (!g) {
+      g = { docs: new Set(), samples: [] }
+      groups.set(key, g)
+    }
+    g.docs.add(s.docIndex)
+    g.samples.push(s)
   }
-  const sectionLengths = sectionProfiles.map((s) => s.words)
-  const global = computeSectionProfile(view.prose)
-  const citationCount = (view.raw.match(JOURNAL_CITATION_RE) ?? []).length
-  const rawWords = countWords(view.raw)
-  const globalCitationDensity = rawWords > 0 ? round2((citationCount / rawWords) * 1000) : 0
-  const citationDist: Distribution = { count: 1, mean: globalCitationDensity, median: globalCitationDensity, p10: globalCitationDensity, p90: globalCitationDensity, std: 0 }
+  const out: JournalSectionProfile[] = []
+  for (const [name, g] of groups) {
+    out.push({
+      name,
+      articleCount: g.docs.size,
+      sentenceLength: computeDistribution(g.samples.map((s) => s.sentenceLengthMedian)),
+      paragraphLength: computeDistribution(g.samples.map((s) => s.paragraphLengthMedian)),
+      hedgeDensity: computeDistribution(g.samples.map((s) => s.hedgeDensity)),
+      causalForce: computeDistribution(g.samples.map((s) => s.causalForce)),
+      evidentialForce: computeDistribution(g.samples.map((s) => s.evidentialForce)),
+      firstPersonUsage: computeDistribution(g.samples.map((s) => s.firstPersonSentenceRatio)),
+      passiveVoice: computeDistribution(g.samples.map((s) => s.passiveSentenceRatio)),
+      citationDensity: computeDistribution(g.samples.map((s) => s.citationDensity)),
+    })
+  }
+  return out
+}
+
+function aggregateGlobalSamples(samples: JournalSectionSample[]): {
+  sentenceStyle: JournalProfile['sentenceStyle']
+  paragraphStyle: JournalProfile['paragraphStyle']
+  epistemics: JournalProfile['epistemics']
+  citations: JournalProfile['citations']
+} {
+  return {
+    sentenceStyle: {
+      sentenceLength: computeDistribution(samples.map((s) => s.sentenceLengthMedian)),
+      sentenceLengthVariance: computeDistribution(samples.map((s) => s.sentenceLengthStd)),
+      passiveVoice: computeDistribution(samples.map((s) => s.passiveSentenceRatio)),
+      firstPersonUsage: computeDistribution(samples.map((s) => s.firstPersonSentenceRatio)),
+    },
+    paragraphStyle: {
+      paragraphLength: computeDistribution(samples.map((s) => s.paragraphLengthMedian)),
+      paragraphVariance: computeDistribution(samples.map((s) => s.paragraphLengthStd)),
+    },
+    epistemics: {
+      causalForce: computeDistribution(samples.map((s) => s.causalForce)),
+      evidentialForce: computeDistribution(samples.map((s) => s.evidentialForce)),
+      hedgeDensity: computeDistribution(samples.map((s) => s.hedgeDensity)),
+    },
+    citations: {
+      density: computeDistribution(samples.map((s) => s.citationDensity)),
+      sectionDistribution: {},
+    },
+  }
+}
+
+/**
+ * v1.4.1 Corpus-aware Journal Distillation：
+ * 每篇论文独立 preprocess / detectSections，再按 canonical section 跨论文聚合。
+ * 输出只包含抽象统计特征，不保存论文原句。
+ */
+export function computeJournalProfileFromDocuments(
+  documents: JournalDocument[],
+  opts?: { journal?: string; articleType?: string; discipline?: string; sampleSize?: number },
+): JournalProfile {
+  const sectionSamples: Array<JournalSectionSample & { docIndex: number }> = []
+  const globalSamples: JournalSectionSample[] = []
+  let parsed = 0
+  documents.forEach((doc, docIndex) => {
+    try {
+      const view = preprocess(doc.text)
+      const sections = detectSections(view)
+      if (sections.length === 0) {
+        const s = computeSectionSample(view.prose) as JournalSectionSample & { docIndex: number }
+        s.name = canonicalSectionName('unknown')
+        s.docIndex = docIndex
+        sectionSamples.push(s)
+      } else {
+        for (const sec of sections) {
+          const s = computeSectionSample(sec.text) as JournalSectionSample & { docIndex: number }
+          s.name = canonicalSectionName(sec.name)
+          s.docIndex = docIndex
+          sectionSamples.push(s)
+        }
+      }
+      globalSamples.push(computeSectionSample(view.prose))
+      parsed += 1
+    } catch {
+      // 单篇解析失败跳过，不影响其他论文
+    }
+  })
+  const sectionProfiles = aggregateSectionProfiles(sectionSamples)
+  const sectionLengths = sectionSamples.map((s) => s.words)
+  const global = aggregateGlobalSamples(globalSamples)
   return {
     metadata: {
       journal: opts?.journal ?? 'custom-journal',
       articleType: opts?.articleType,
       discipline: opts?.discipline,
-      sampleSize: opts?.sampleSize,
-      profileVersion: '1.4.0',
+      sampleSize: opts?.sampleSize ?? parsed,
+      profileVersion: '1.4.1',
       corpusDate: new Date().toISOString().slice(0, 10),
     },
     structure: {
@@ -436,26 +543,19 @@ export function computeJournalProfile(text: string, opts?: { journal?: string; a
       sectionLengthDistribution: computeDistribution(sectionLengths),
     },
     rhetoric: { moves: [] },
-    epistemics: {
-      causalForce: computeDistribution(sectionProfiles.map((s) => s.causalForce)),
-      evidentialForce: computeDistribution(sectionProfiles.map((s) => s.evidenceForce)),
-      hedgeDensity: computeDistribution(sectionProfiles.map((s) => s.hedgeDensity)),
-    },
-    sentenceStyle: {
-      sentenceLength: global.sentenceLength,
-      sentenceLengthVariance: computeDistribution(sectionProfiles.map((s) => s.sentenceLength.std)),
-      passiveVoice: computeDistribution(sectionProfiles.map((s) => s.passiveRatio)),
-      firstPersonUsage: computeDistribution(sectionProfiles.map((s) => s.firstPersonRatio)),
-    },
-    paragraphStyle: {
-      paragraphLength: global.paragraphLength,
-      paragraphVariance: computeDistribution(sectionProfiles.map((s) => s.paragraphLength.std)),
-    },
-    citations: {
-      density: citationDist,
-      sectionDistribution: {},
-    },
+    epistemics: global.epistemics,
+    sentenceStyle: global.sentenceStyle,
+    paragraphStyle: global.paragraphStyle,
+    citations: global.citations,
   }
+}
+
+/**
+ * 从目标期刊代表论文语料蒸馏 Journal Profile（单文档兼容入口）。
+ * 输入可以是一篇或多篇代表论文的拼接文本；推荐多篇时改用 computeJournalProfileFromDocuments。
+ */
+export function computeJournalProfile(text: string, opts?: { journal?: string; articleType?: string; discipline?: string; sampleSize?: number }): JournalProfile {
+  return computeJournalProfileFromDocuments([{ text }], opts)
 }
 
 function journalMetricScore(current: number, dist?: Distribution): { score: number; status: JournalFitMetric['status'] } | null {
@@ -478,8 +578,8 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
   const fitSections: JournalFitSection[] = []
 
   for (const sec of sections) {
-    const name = sec.name.toLowerCase()
-    const cur = computeSectionProfile(sec.text)
+    const name = canonicalSectionName(sec.name)
+    const cur = computeSectionSample(sec.text)
     cur.name = name
     const prof = profileSections.get(name)
     if (!prof) {
@@ -487,34 +587,27 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
       continue
     }
     const metrics: JournalFitMetric[] = []
-    const addMetric = (metric: string, current: number, expected: Distribution | number): void => {
-      const dist: Distribution | undefined = typeof expected === 'object' ? expected : {
-        count: 1,
-        mean: expected,
-        median: expected,
-        p10: expected,
-        p90: expected,
-        std: 0,
-      }
+    const addMetric = (metric: string, current: number, dist?: Distribution): void => {
       const r = journalMetricScore(current, dist)
       if (!r) return
       metrics.push({
         metric,
         current: round2(current),
-        expected: dist.median,
-        p10: dist.p10,
-        p90: dist.p90,
+        expected: dist!.median,
+        p10: dist!.p10,
+        p90: dist!.p90,
         score: r.score,
         status: r.status,
       })
     }
-    addMetric('句长中位数', cur.sentenceLength.median, prof.sentenceLength)
-    addMetric('段长中位数', cur.paragraphLength.median, prof.paragraphLength)
+    addMetric('句长中位数', cur.sentenceLengthMedian, prof.sentenceLength)
+    addMetric('段长中位数', cur.paragraphLengthMedian, prof.paragraphLength)
     addMetric('hedge 密度', cur.hedgeDensity, prof.hedgeDensity)
     addMetric('因果力密度', cur.causalForce, prof.causalForce)
-    addMetric('证据力密度', cur.evidenceForce, prof.evidenceForce)
-    addMetric('第一人称比例', cur.firstPersonRatio, prof.firstPersonRatio)
-    addMetric('被动语态比例', cur.passiveRatio, prof.passiveRatio)
+    addMetric('证据力密度', cur.evidentialForce, prof.evidentialForce)
+    addMetric('第一人称句子比例', cur.firstPersonSentenceRatio, prof.firstPersonUsage)
+    addMetric('被动语态句子比例', cur.passiveSentenceRatio, prof.passiveVoice)
+    addMetric('引用密度', cur.citationDensity, prof.citationDensity)
     const score = metrics.length > 0 ? Math.round(metrics.reduce((a, m) => a + m.score, 0) / metrics.length) : 0
     fitSections.push({ name: sec.name, score, metrics })
   }
@@ -527,7 +620,6 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
     warnings,
   }
 }
-
 // ---------------------------------------------------------------------------
 // v0.6 Scholarship Lock：科研实体提取与前后对比（零 LLM，纯确定性）
 // ---------------------------------------------------------------------------
