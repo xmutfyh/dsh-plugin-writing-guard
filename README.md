@@ -427,6 +427,15 @@ Scientific tokens          Scientific commitments
 - `Results and Discussion` 独立为 `results_discussion`，不再混入 `results`。
 - 新增 epistemic ratio 数值 TP/TN 测试。
 
+## v1.6.2 Rhetorical Semantics Hardening
+
+- 修复中文 Rhetorical Moves 的 `` 边界：中英文 regex 拆开，`近年来 / 随着 / 背景 / 本研究` 等中文 move 不再被 JS `` 吞掉。
+- Rhetorical order fit 改用 **medoid sequence**：不再拿 frequency-sorted move list 当目标顺序，而是选 corpus 中真实存在且与其他序列平均 LCS 相似度最高的序列。
+- `transitions` 改为 **section-bound**（`sectionTransitions`），避免 Abstract / Introduction / Discussion 共享 move 互相污染；旧全局 `transitions` 保留兼容。
+- `results_discussion` 支持 **Results + Discussion 双 move vocabulary**（finding / comparison / unexpected + summary / interpretation / limitation / implication / future）。
+- 新增 `spanDensity` / `recognizedClaimDensity` / `highCausalDensity` / `hedgedClaimDensity` / `strongEvidentialDensity`：区分“所有 proposition spans”与“明确 scientific claim”，procedural/descriptive 不再被误算成 recognized claim。
+- Journal Fit 引入 **分组权重**：句法结构 20% / 语态人称 10% / 引用 15% / 科学主张 35% / 修辞结构 20%，不再由 metric 数量隐式决定模块权重。
+
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
 > 不是又增加了几个 regex，而是拿真实 manuscript audit 出来的 false positive 反过来改 engine——

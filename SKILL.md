@@ -14,7 +14,7 @@ description: >-
 
 # 论文写作纪律守则（writing-guard）
 
-本技能是 `dsh-plugin-writing-guard`（DSH 插件，v1.6.1）的独立静态版——规则集与插件一致，
+本技能是 `dsh-plugin-writing-guard`（DSH 插件，v1.6.2）的独立静态版——规则集与插件一致，
 供没有 DSH 的环境（Codex / Claude Code / Antigravity / 任意 agent）在写作与润色时执行。
 所有规则均为确定性正则/统计，零网络零 LLM；源插件还提供 `writing_audit`（扫描）、
 `writing_rules`（速查）、`writing_style_profile`（作者风格档案）、`writing_journal_profile`
@@ -148,6 +148,10 @@ description: >-
 - v1.6.1：Semantic Hardening——Journal Fit 使用 `claimDensity`；`ClaimSpan.spanKind`
   区分 claim/procedural/descriptive/unknown；移除旧 regex epistemic 重复计权；
   `Results and Discussion` 独立为 `results_discussion`。
+- v1.6.2：Rhetorical Semantics Hardening——修复中文 rhetorical regex 的 `` 边界；
+  rhetorical order 改用 medoid sequence；transitions 改为 section-bound；
+  `results_discussion` 支持 Results + Discussion 双 move；新增 `spanDensity` / `recognizedClaimDensity`；
+  Journal Fit 按分组权重（句法/语态/引用/科学主张/修辞）计算。
 - 优先级：Scientific Invariant > Epistemic Safety > Journal Requirement > Journal Norm >
   Journal Style——期刊风格永远不能覆盖科学完整性；原文只支持 "associated with" 时，
   任何 Journal Profile 都不能推动改成 "caused"。
@@ -166,5 +170,5 @@ description: >-
 
 ---
 
-*本守则来源于 dsh-plugin-writing-guard v1.6.1（MIT）。检测类规则为概率信号：命中即人工复核，
+*本守则来源于 dsh-plugin-writing-guard v1.6.2（MIT）。检测类规则为概率信号：命中即人工复核，
 专业术语与正当 limitations 不因规则报警而删改。*

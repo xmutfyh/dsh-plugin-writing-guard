@@ -1666,7 +1666,7 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.6.1' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.6.2' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
   check('journal profile preserves only statistics', !JSON.stringify(profile).includes('This study investigates'))

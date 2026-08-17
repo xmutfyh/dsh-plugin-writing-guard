@@ -873,7 +873,7 @@ export function computeJournalProfileFromDocuments(
       articleType: opts?.articleType,
       discipline: opts?.discipline,
       sampleSize: opts?.sampleSize ?? parsed,
-      profileVersion: '1.6.1',
+      profileVersion: '1.6.2',
       corpusDate: new Date().toISOString().slice(0, 10),
     },
     structure: {

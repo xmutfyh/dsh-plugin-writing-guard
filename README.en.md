@@ -274,6 +274,15 @@ neatly**. Seven new deterministic/statistical rules (zero network):
 - `Results and Discussion` is now its own canonical `results_discussion` section.
 - Added numerical TP/TN tests for epistemic ratios.
 
+## v1.6.2 Rhetorical Semantics Hardening
+
+- Fixed Chinese rhetorical-move `` boundaries: Chinese patterns are no longer wrapped in ``, so `近年来 / 随着 / 背景 / 本研究` are detected correctly.
+- Rhetorical order fit now uses a **medoid sequence**: the corpus-real sequence with the highest mean LCS similarity to all other observed sequences, instead of a frequency-sorted move list.
+- Transitions are now **section-bound** (`sectionTransitions`), preventing shared moves in Abstract / Introduction / Discussion from polluting each other; legacy global `transitions` is kept for compatibility.
+- `results_discussion` now supports **both Results and Discussion move vocabularies** (finding / comparison / unexpected + summary / interpretation / limitation / implication / future).
+- Added `spanDensity`, `recognizedClaimDensity`, `highCausalDensity`, `hedgedClaimDensity`, and `strongEvidentialDensity` — procedural/descriptive spans are no longer counted as recognized scientific claims.
+- Journal Fit now uses **grouped weights**: Structure 20% / Voice 10% / Citation 15% / Epistemics 35% / Rhetoric 20%, instead of implicit metric-count weighting.
+
 ## Density thresholds (v0.3.3)
 
 Frequency rules use **per-1000-language-unit** density: English rules are normalized by English
