@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.4.2'
+export const PLUGIN_VERSION = '1.5.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -272,7 +272,7 @@ export interface JournalDocument {
   articleType?: string
 }
 
-/** 单个章节的写作特征画像（v1.4.2：所有指标均为跨论文聚合后的 Distribution） */
+/** 单个章节的写作特征画像（v1.5：所有指标均为跨论文聚合后的 Distribution） */
 export interface JournalSectionProfile {
   name: string
   articleCount: number
@@ -288,6 +288,13 @@ export interface JournalSectionProfile {
   bibliographicCitationDensity: Distribution
   /** v1.4.2：图表引用密度（Figure/Table/Fig. 编号） */
   figureTableReferenceDensity: Distribution
+  // ---------- v1.5 Epistemic Journal Fingerprint ----------
+  claimCount: Distribution
+  highCausalRatio: Distribution
+  hedgedClaimRatio: Distribution
+  strongEvidentialRatio: Distribution
+  scopeQualifiedRatio: Distribution
+  nullFindingRatio: Distribution
 }
 
 /** v1.4 Journal Profile：从目标期刊代表论文蒸馏出的写作特征（不保存原句，只保存统计规律） */
@@ -315,6 +322,13 @@ export interface JournalProfile {
     evidentialForce?: Distribution
     hedgeDensity?: Distribution
     interpretationDensity?: Distribution
+    // ---------- v1.5 Epistemic Journal Fingerprint ----------
+    claimCount?: Distribution
+    highCausalRatio?: Distribution
+    hedgedClaimRatio?: Distribution
+    strongEvidentialRatio?: Distribution
+    scopeQualifiedRatio?: Distribution
+    nullFindingRatio?: Distribution
   }
   sentenceStyle: {
     sentenceLength?: Distribution
@@ -416,6 +430,13 @@ interface JournalSectionSample {
   citationDensity: number
   bibliographicCitationDensity: number
   figureTableReferenceDensity: number
+  // ---------- v1.5 Epistemic Journal Fingerprint ----------
+  claimCount: number
+  highCausalRatio: number
+  hedgedClaimRatio: number
+  strongEvidentialRatio: number
+  scopeQualifiedRatio: number
+  nullFindingRatio: number
 }
 
 function canonicalSectionName(name: string): string {
@@ -445,6 +466,10 @@ function computeSectionSample(text: string): JournalSectionSample {
   const perK = (n: number): number => (words > 0 ? round2((n / words) * 1000) : 0)
   const firstPersonSentenceCount = sentences.filter((s) => JOURNAL_FIRST_PERSON_SENTENCE_RE.test(s)).length
   const passiveSentenceCount = sentences.filter((s) => JOURNAL_PASSIVE_SENTENCE_RE.test(s)).length
+  // v1.5：复用 ClaimSpan 提取 epistemic fingerprint，不再只数 regex 词频
+  const claims = sentences.flatMap((s) => extractClaimSpans(s))
+  const claimCount = claims.length
+  const ratioOf = (pred: (c: ClaimSpan) => boolean): number => (claimCount > 0 ? round2(claims.filter(pred).length / claimCount) : 0)
   return {
     name: '',
     words,
@@ -460,6 +485,12 @@ function computeSectionSample(text: string): JournalSectionSample {
     citationDensity: perK((text.match(JOURNAL_CITATION_RE) ?? []).length),
     bibliographicCitationDensity: perK((text.match(JOURNAL_BIBLIOGRAPHIC_CITATION_RE) ?? []).length),
     figureTableReferenceDensity: perK((text.match(JOURNAL_FIGURE_TABLE_REFERENCE_RE) ?? []).length),
+    claimCount,
+    highCausalRatio: ratioOf((c) => c.causalLevel >= 4),
+    hedgedClaimRatio: ratioOf((c) => c.hedged),
+    strongEvidentialRatio: ratioOf((c) => c.evidentialLevel >= 4),
+    scopeQualifiedRatio: ratioOf((c) => c.scopeMarkers.length > 0),
+    nullFindingRatio: ratioOf((c) => c.nullMarkers.length > 0 || c.negationMarkers.length > 0),
   }
 }
 
@@ -490,6 +521,12 @@ function aggregateSectionProfiles(samples: Array<JournalSectionSample & { docInd
       citationDensity: computeDistribution(g.samples.map((s) => s.citationDensity)),
       bibliographicCitationDensity: computeDistribution(g.samples.map((s) => s.bibliographicCitationDensity)),
       figureTableReferenceDensity: computeDistribution(g.samples.map((s) => s.figureTableReferenceDensity)),
+      claimCount: computeDistribution(g.samples.map((s) => s.claimCount)),
+      highCausalRatio: computeDistribution(g.samples.map((s) => s.highCausalRatio)),
+      hedgedClaimRatio: computeDistribution(g.samples.map((s) => s.hedgedClaimRatio)),
+      strongEvidentialRatio: computeDistribution(g.samples.map((s) => s.strongEvidentialRatio)),
+      scopeQualifiedRatio: computeDistribution(g.samples.map((s) => s.scopeQualifiedRatio)),
+      nullFindingRatio: computeDistribution(g.samples.map((s) => s.nullFindingRatio)),
     })
   }
   return out
@@ -516,6 +553,12 @@ function aggregateGlobalSamples(samples: JournalSectionSample[]): {
       causalForce: computeDistribution(samples.map((s) => s.causalForce)),
       evidentialForce: computeDistribution(samples.map((s) => s.evidentialForce)),
       hedgeDensity: computeDistribution(samples.map((s) => s.hedgeDensity)),
+      claimCount: computeDistribution(samples.map((s) => s.claimCount)),
+      highCausalRatio: computeDistribution(samples.map((s) => s.highCausalRatio)),
+      hedgedClaimRatio: computeDistribution(samples.map((s) => s.hedgedClaimRatio)),
+      strongEvidentialRatio: computeDistribution(samples.map((s) => s.strongEvidentialRatio)),
+      scopeQualifiedRatio: computeDistribution(samples.map((s) => s.scopeQualifiedRatio)),
+      nullFindingRatio: computeDistribution(samples.map((s) => s.nullFindingRatio)),
     },
     citations: {
       density: computeDistribution(samples.map((s) => s.citationDensity)),
@@ -570,7 +613,7 @@ export function computeJournalProfileFromDocuments(
       articleType: opts?.articleType,
       discipline: opts?.discipline,
       sampleSize: opts?.sampleSize ?? parsed,
-      profileVersion: '1.4.2',
+      profileVersion: '1.5.0',
       corpusDate: new Date().toISOString().slice(0, 10),
     },
     structure: {
@@ -656,6 +699,13 @@ export function auditJournalFit(text: string, profile: JournalProfile): JournalF
     addMetric('被动语态句子比例', cur.passiveSentenceRatio, prof.passiveVoice, 0.05)
     addMetric('文献引用密度', cur.bibliographicCitationDensity, prof.bibliographicCitationDensity)
     addMetric('图表引用密度', cur.figureTableReferenceDensity, prof.figureTableReferenceDensity)
+    // v1.5 Epistemic Journal Fingerprint
+    addMetric('claim 数量', cur.claimCount, prof.claimCount)
+    addMetric('高因果主张比例', cur.highCausalRatio, prof.highCausalRatio, 0.05)
+    addMetric('hedge 主张比例', cur.hedgedClaimRatio, prof.hedgedClaimRatio, 0.05)
+    addMetric('强证据主张比例', cur.strongEvidentialRatio, prof.strongEvidentialRatio, 0.05)
+    addMetric('scope 限定主张比例', cur.scopeQualifiedRatio, prof.scopeQualifiedRatio, 0.05)
+    addMetric('零结果/否定主张比例', cur.nullFindingRatio, prof.nullFindingRatio, 0.05)
     const score = metrics.length > 0 ? Math.round(metrics.reduce((a, m) => a + m.score, 0) / metrics.length) : 0
     fitSections.push({ name: sec.name, score, metrics, articleCount: prof.articleCount })
   }

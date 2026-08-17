@@ -285,7 +285,7 @@ Scientific tokens          Scientific commitments
 | **`local-citation-integrity`** 🔴 | 零网络确定性：`\cite{key}` ↔ `.bib` 条目存在性、`\ref` ↔ `\label` 对应、bib 条目缺 title/year/author、同一 DOI 多 key；写作/自动审计都自动探测同目录 `.bib`；"该文献是否支持这句话"留在边界外 | violation/advisory |
 | **StyleProfile → 节奏指纹** | 新增 `sentenceLengthCV`/`shortSentenceRatio`/`longSentenceRatio`/`paragraphLengthStd`/`paragraphLengthCV`（向后兼容） | — |
 
-测试 246 → 276 项（v1.4 新增 Journal Profile/Fit 后为 284 项；v1.4.1 Corpus-aware 后为 291 项；v1.4.2 hardening 后为 293 项，见下）。
+测试 246 → 276 项（v1.4 新增 Journal Profile/Fit 后为 284 项；v1.4.1 Corpus-aware 后为 291 项；v1.4.2 hardening 后为 293 项；v1.5 Epistemic Fingerprint 后为 294 项，见下）。
 
 ## v1.4 Journal Engine（目标期刊写作蒸馏与 Journal Fit）
 
@@ -328,6 +328,19 @@ Scientific tokens          Scientific commitments
 - **引用拆分**：`bibliographicCitationDensity` 与 `figureTableReferenceDensity` 分开统计和评分。
 - **Journal Fit Confidence**：报告新增 `confidence`（very_low/low/medium/high）与 `corpusSize`。
 - **Canonical aliases 扩充**：`materials & methods`、`experimental methods`、`modeling/modelling`、`summary`、`results and discussion` 等归一化。
+
+## v1.5 Epistemic Journal Fingerprint（复用 ClaimSpan）
+
+- Journal Engine 不再只数 `causes` / `suggest` 等 regex 词频。
+- 现在通过 `splitSentences` → `extractClaimSpans` 提取每个章节的 claim-level 指纹。
+- `JournalSectionProfile` 新增：
+  - `claimCount`
+  - `highCausalRatio`（causalLevel ≥ 4）
+  - `hedgedClaimRatio`
+  - `strongEvidentialRatio`（evidentialLevel ≥ 4）
+  - `scopeQualifiedRatio`
+  - `nullFindingRatio`
+- Journal Fit 新增 6 个 epistemic 指标，与句法/引用指标一起参与打分。
 
 ## v0.9.1 / v0.9.2 / v0.9.3 real-paper hardened（真实论文压出来的修复）
 
@@ -469,7 +482,7 @@ Writing Guard 更偏向在 DSH 论文工作流中持续检查和预防。
 ## 测试
 
 ```sh
-npm test   # 自动先 build 再跑 293 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 claim-identity/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+不配对全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归/Journal Profile 与 Journal Fit/corpus-aware 聚合/CI-safe 真实语料）
+npm test   # 自动先 build 再跑 294 项 TP/TN/边界用例（零依赖自研 runner，含 isPaperFile/profile 检测/指纹稳定性含 claim-identity/Scholarship Lock 全方向/风格档案/Epistemic Lock mutation benchmark/版本差距保护+不配对全局清单/证据状态守恒/claim-bound 交换/alignment-uncertain 回归/Journal Profile 与 Journal Fit/corpus-aware 聚合/CI-safe 真实语料/Epistemic Journal Fingerprint）
 ```
 
 CI（GitHub Actions）会在每次 push / PR 自动跑构建 + 全部测试。

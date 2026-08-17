@@ -4,7 +4,29 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-08-17
+
+### Added — Epistemic Journal Fingerprint（复用 ClaimSpan）
+
+- **Journal Engine 不再只数 regex 词频**：`computeSectionSample` 现在通过
+  `splitSentences` → `extractClaimSpans` 提取每个章节的 claim-level 科学主张指纹。
+- **`JournalSectionProfile` 新增 v1.5 分布字段**：
+  - `claimCount`
+  - `highCausalRatio`（causalLevel ≥ 4）
+  - `hedgedClaimRatio`
+  - `strongEvidentialRatio`（evidentialLevel ≥ 4）
+  - `scopeQualifiedRatio`
+  - `nullFindingRatio`（零结果/否定）
+- **Journal Fit 新增 6 个 epistemic 指标**，与原有句法/引用指标一起参与打分。
+- **`JournalProfile.epistemics` 同步扩展**，全局 corpus 也能输出 epistemic fingerprint。
+- `PLUGIN_VERSION` 1.4.2 → 1.5.0。
+
+### Tests
+
+- 293 → 294: epistemic fingerprint distributions 存在性检查。
+
 ## [1.4.2] - 2026-08-17
+
 
 ### Added / Fixed — Journal Fit engineering hardening
 

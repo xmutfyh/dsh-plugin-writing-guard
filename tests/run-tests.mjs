@@ -1666,7 +1666,7 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.4.2' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.5.0' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
   check('journal profile preserves only statistics', profile.rhetoric.moves.length === 0 && !JSON.stringify(profile).includes('This study investigates'))
@@ -1714,6 +1714,7 @@ console.log('=== 91. v1.4.1 corpus-aware aggregation（多篇同名校验）==='
   check('corpus results median is aggregate (20, not 30)', results && results.sentenceLength.median === 20, JSON.stringify(results?.sentenceLength))
   check('corpus sampleSize', profile.metadata.sampleSize === 3, JSON.stringify(profile.metadata.sampleSize))
   check('corpus profile has split citation distributions', !!results && !!results.bibliographicCitationDensity && !!results.figureTableReferenceDensity && results.bibliographicCitationDensity.count === 3 && results.figureTableReferenceDensity.count === 3, JSON.stringify(results && { bib: results.bibliographicCitationDensity, fig: results.figureTableReferenceDensity }))
+  check('corpus profile has epistemic fingerprint distributions', !!results && !!results.claimCount && results.claimCount.count === 3 && !!results.highCausalRatio && !!results.hedgedClaimRatio && !!results.strongEvidentialRatio && !!results.scopeQualifiedRatio && !!results.nullFindingRatio, JSON.stringify(results && { claimCount: results.claimCount, highCausalRatio: results.highCausalRatio }))
 }
 
 console.log('=== 92. v1.4.2 real-corpus smoke test（CI 可跳过，本地 ESR/source.md 或 WRITING_GUARD_REAL_CORPUS）===')

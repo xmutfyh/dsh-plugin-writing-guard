@@ -182,6 +182,18 @@ neatly**. Seven new deterministic/statistical rules (zero network):
 - **Journal Fit Confidence**: reports include `confidence` (very_low/low/medium/high) and `corpusSize`.
 - **More canonical aliases**: `materials & methods`, `experimental methods`, `modeling/modelling`, `summary`, `results and discussion`, `background`, etc.
 
+## v1.5 Epistemic Journal Fingerprint (ClaimSpan-based)
+
+- Journal Engine now reuses `extractClaimSpans` instead of counting regex keywords.
+- New per-section distributions:
+  - `claimCount`
+  - `highCausalRatio` (causalLevel ≥ 4)
+  - `hedgedClaimRatio`
+  - `strongEvidentialRatio` (evidentialLevel ≥ 4)
+  - `scopeQualifiedRatio`
+  - `nullFindingRatio`
+- Journal Fit includes these epistemic fingerprint metrics alongside syntactic/citation metrics.
+
 ## Density thresholds (v0.3.3)
 
 Frequency rules use **per-1000-language-unit** density: English rules are normalized by English
