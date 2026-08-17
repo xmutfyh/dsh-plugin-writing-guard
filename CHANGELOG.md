@@ -23,6 +23,8 @@ aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   与“明确 scientific claim”，并同步进入 Journal Profile / Journal Fit。
 - **Journal Fit 引入分组权重（P1）**：按 句法结构 20% / 语态人称 10% / 引用 15% / 科学主张 35% /
   修辞结构 20% 分组加权，不再由 metric 数量隐式决定模块权重。
+- **Journal Fit 新增 `rhetorical transition fit`（P1）**：除顺序相似度外，额外计算当前稿件每个
+  move transition 在目标期刊 corpus 中的出现概率，未出现过的 transition 按 0 计，避免只奖励 LCS 命中。
 - `PLUGIN_VERSION` 1.6.1 → 1.6.2。
 
 ### Tests

@@ -1864,6 +1864,10 @@ console.log('=== 95. v1.6.2 Rhetorical Semantics Hardening（中文/medoid/resul
   const wrongOrder = wrongReport.sections[0]?.metrics.find((m) => m.metric === 'rhetorical order fit')?.score ?? 0
   check('rhetorical order fit: correct > wrong', correctOrder > wrongOrder, `correct=${correctOrder} wrong=${wrongOrder}`)
 
+  const correctTransition = correctReport.sections[0]?.metrics.find((m) => m.metric === 'rhetorical transition fit')?.score ?? 0
+  const wrongTransition = wrongReport.sections[0]?.metrics.find((m) => m.metric === 'rhetorical transition fit')?.score ?? 0
+  check('rhetorical transition fit: correct > wrong', correctTransition > wrongTransition, `correct=${correctTransition} wrong=${wrongTransition}`)
+
   // P1: spanKind 不再把 procedural/descriptive 当成 recognized scientific claim
   const proc = extractClaimSpans('We collected samples and measured temperature.')
   const procProfile = computeJournalProfileFromDocuments([{ text: '# Methods\n\nWe collected samples and measured temperature.', sourceId: 's' }], { journal: 'SpanKind' }).structure.sections.find((s) => s.name === 'methods')
