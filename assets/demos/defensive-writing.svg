@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+  <rect width="720" height="420" fill="#f8fafc"/>
+  <text x="24" y="36" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700" fill="#0f172a">Defensive AI Writing</text>
+  <rect x="24" y="54" width="672" height="110" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+  <text x="40" y="80" font-family="Consolas, monospace" font-size="13" fill="#991b1b">While these findings are promising, they should be interpreted</text>
+  <text x="40" y="100" font-family="Consolas, monospace" font-size="13" fill="#991b1b">with caution. Several limitations must also be acknowledged.</text>
+  <text x="40" y="120" font-family="Consolas, monospace" font-size="13" fill="#991b1b">Nevertheless, the results provide potentially valuable insights...</text>
+  <text x="40" y="148" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="600" fill="#b91c1c">⚠ Defensive-writing cluster</text>
+  <text x="40" y="166" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#7f1d1d">concession stacking · limitation pre-emption · generic value claim · unnecessary epistemic retreat</text>
+  <path d="M360 176 L360 196" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#64748b"/></marker></defs>
+  <rect x="24" y="210" width="672" height="110" rx="8" fill="#dcfce7" stroke="#86efac"/>
+  <text x="40" y="236" font-family="Consolas, monospace" font-size="13" fill="#14532d">The model improved F1 by 4.2% over the strongest baseline.</text>
+  <text x="40" y="256" font-family="Consolas, monospace" font-size="13" fill="#14532d">Performance decreased on the external cohort, indicating</text>
+  <text x="40" y="276" font-family="Consolas, monospace" font-size="13" fill="#14532d">limited cross-domain generalization.</text>
+  <text x="40" y="304" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="600" fill="#15803d">After — more like a real researcher</text>
+  <text x="24" y="360" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#334155">Not hiding AI use. Removing bad AI writing.</text>
+</svg>

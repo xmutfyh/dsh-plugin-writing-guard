@@ -79,6 +79,14 @@ Product output is grouped into three layers, so users immediately know which pro
 | **EVIDENCE** | Did this sentence change the science? |
 | **JOURNAL** | Is this sentence right for the journal I am targeting? |
 
+### Demos
+
+![Defensive AI Writing](assets/demos/defensive-writing.svg)
+
+![Evidence Drift](assets/demos/evidence-drift.svg)
+
+![Journal Fit](assets/demos/journal-fit.svg)
+
 ---
 
 The plugin is not a one-shot "humanizer" that rewrites your whole paper after it is done.

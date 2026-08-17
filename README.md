@@ -73,6 +73,14 @@ limited cross-domain generalization.
 | **EVIDENCE** | 这句话有没有把 science 改掉？ |
 | **JOURNAL** | 这句话适不适合我要投的期刊？ |
 
+### 效果演示（Demos）
+
+![Defensive AI Writing](assets/demos/defensive-writing.svg)
+
+![Evidence Drift](assets/demos/evidence-drift.svg)
+
+![Journal Fit](assets/demos/journal-fit.svg)
+
 ---
 
 如果你正在寻找：

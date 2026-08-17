@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360">
+  <rect width="720" height="360" fill="#f8fafc"/>
+  <text x="24" y="36" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700" fill="#0f172a">Evidence Drift</text>
+  <rect x="24" y="60" width="200" height="70" rx="8" fill="#e0f2fe" stroke="#7dd3fc"/>
+  <text x="40" y="92" font-family="Consolas, monospace" font-size="15" fill="#075985">associated with</text>
+  <text x="40" y="116" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#0369a1">causal level 1</text>
+  <path d="M240 95 L310 95" stroke="#64748b" stroke-width="2" marker-end="url(#arrow2)"/>
+  <defs><marker id="arrow2" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#64748b"/></marker></defs>
+  <text x="270" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#b45309">AI polish</text>
+  <rect x="330" y="60" width="200" height="70" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+  <text x="346" y="92" font-family="Consolas, monospace" font-size="15" fill="#991b1b">caused</text>
+  <text x="346" y="116" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#b91c1c">causal level 5</text>
+  <text x="560" y="98" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" fill="#dc2626">🚨 claim strength changed</text>
+  <rect x="24" y="170" width="672" height="120" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+  <text x="40" y="198" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600" fill="#92400e">Language can change. Evidence cannot.</text>
+  <text x="40" y="224" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#78350f">Writing Guard preserves numbers, citations, null findings,</text>
+  <text x="40" y="244" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#78350f">causality, evidence strength and scope during polishing.</text>
+  <text x="40" y="272" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#78350f">It catches drift even when every number stays the same.</text>
+</svg>
