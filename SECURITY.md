@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 1.6.x | ✅ |
+| 1.7.x | ✅ |
+| 1.6.x | ✅ (maintenance) |
 | 0.6.x | ✅ (maintenance) |
 | < 0.6 | ❌ (upgrade to the latest release) |
 

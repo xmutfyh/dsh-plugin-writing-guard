@@ -4,7 +4,7 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.0] - 2026-08-18
+## [1.7.0] - 2026-08-24
 
 ### Added — DELIVERY 第四支柱：Context-to-Artifact Leakage (CAL) 检测
 
@@ -36,7 +36,7 @@ aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   支持 "取消抽奖环节，改为现场互动" 模式。
 - **`hasRejectionContext` 门控**：当调用方已提供 rejectedTerms/rejectedClaims 时，
   DELIVERY_CANDIDATE 不再触发（因为有更准确的 UNJUSTIFIED_NEGATIVE_REFERENCE）。
-  baseline 可用时 baseline 可用时仍照常执行 UNJUSTIFIED 检查。
+  baseline 可用时仍照常执行 UNJUSTIFIED 检查。
 - **反事实对验证**：同一最终产物 + 不同被否决历史 → 合规结论不变（B 的
   交付物提及被否决术语时产生 CAL 发现，A 不产生）。
 
