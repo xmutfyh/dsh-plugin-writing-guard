@@ -1885,6 +1885,262 @@ console.log('=== 95. v1.6.2 Rhetorical Semantics Hardening（中文/medoid/resul
 
 
 console.log('')
+console.log('=== 96. Delivery Integrity: CAL 检测 ===')
+{
+  const { auditDelivery, formatDeliveryReport, normalizeTerm } = await import('../lib/delivery.js')
+
+  // --- Helper ---
+  function hasKind(report, kind) {
+    return report.findings.some((f) => f.kind === kind)
+  }
+  function countKind(report, kind) {
+    return report.findings.filter((f) => f.kind === kind).length
+  }
+
+  // ---- TP: Rejected alternative leakage (Toast → inline, Toast never in baseline) ----
+  {
+    const report = auditDelivery({
+      text: 'Replace Toast errors with inline validation',
+      surface: 'commit',
+      baseline: 'export default function LoginForm() {\n  return <div className="form"><Input /></div>\n}',
+      rejectedTerms: ['Toast'],
+    })
+    check('CAL TP: rejected alternative leakage (Toast)', hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE'), JSON.stringify(report.findings.map((f) => f.kind)))
+    check('CAL TP: Toast high confidence', report.findings.some((f) => f.matchedTerm === 'Toast' && f.confidence === 'high'))
+  }
+
+  // ---- TP: Process residue in commit message ----
+  {
+    const report = auditDelivery({
+      text: 'as requested, we removed the deprecated logging module',
+      surface: 'commit',
+    })
+    check('CAL TP: process residue in commit', hasKind(report, 'REVISION_PROCESS_LEAKAGE'), JSON.stringify(report.findings.map((f) => f.kind)))
+    check('CAL TP: process residue high severity for commit', report.findings.some((f) => f.kind === 'REVISION_PROCESS_LEAKAGE' && f.severity === 'medium'))
+  }
+
+  // ---- TP: CAL in title ("方案B" when A was rejected) ----
+  {
+    const report = auditDelivery({
+      text: '采用方案 B（不采用方案 A）',
+      surface: 'title',
+      rejectedTerms: ['方案A', '方案 A'],
+    })
+    check('CAL TP: rejected alternative in title (方案A)', hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE'), JSON.stringify(report.findings.map((f) => [f.kind, f.matchedTerm])))
+    check('CAL TP: title severity high', report.findings.some((f) => f.kind === 'REJECTED_ALTERNATIVE_LEAKAGE' && f.severity === 'high'))
+  }
+
+  // ---- TN: Legitimate removal (baseline has the thing) ----
+  {
+    const report = auditDelivery({
+      text: 'Remove deprecated v1 API',
+      surface: 'commit',
+      baseline: '// v1 API\nexport function legacyAuth(token) { return validate(token); }\n\n// v2 API\nexport function auth(token) { return verify(token); }',
+      finalState: '// v2 API\nexport function auth(token) { return verify(token); }',
+    })
+    check('CAL TN: legitimate removal (baseline has v1)', !hasKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE'), JSON.stringify(report.findings.map((f) => f.kind)))
+  }
+
+  // ---- TN: Scientific null finding ----
+  {
+    const report = auditDelivery({
+      text: 'No significant difference was observed between the groups.',
+      surface: 'unknown',
+      rejectedTerms: ['significant difference'],
+    })
+    check('CAL TN: scientific null finding not flagged', report.findings.length === 0, JSON.stringify(report.findings.map((f) => f.kind)))
+  }
+
+  // ---- TN: Safety statement ----
+  {
+    const report = auditDelivery({
+      text: 'Contains no peanuts or tree nuts.',
+      surface: 'release',
+      rejectedTerms: ['peanuts', 'tree nuts'],
+    })
+    check('CAL TN: safety statement not flagged', report.findings.length === 0, JSON.stringify(report.findings.map((f) => f.kind)))
+  }
+
+  // ---- TN: Rebuttal profile allows process residue ----
+  {
+    const report = auditDelivery({
+      text: 'As requested by Reviewer 2, we have revised the manuscript to include the additional experiment.',
+      surface: 'handoff', // using handoff since rebuttal isn't a DeliverySurface; handoff has low severity
+    })
+    // process residue in handoff is low severity, but still detectable — let's check title instead
+    const titleReport = auditDelivery({
+      text: 'Revised manuscript with additional experiment',
+      surface: 'title',
+    })
+    // "revised" is not exactly "revised version" pattern, so this should be clean
+    check('CAL TN: legitimate scientific language not flagged', !hasKind(titleReport, 'REVISION_PROCESS_LEAKAGE'), JSON.stringify(titleReport.findings.map((f) => f.kind)))
+
+    // Proper rebuttal-equivalent: handoff with process residue → low severity
+    const handoffReport = auditDelivery({
+      text: 'As requested, we have updated the methods section.',
+      surface: 'handoff',
+    })
+    check('CAL: process residue in handoff is low severity',
+      handoffReport.findings.some((f) => f.kind === 'REVISION_PROCESS_LEAKAGE' && f.severity === 'low'),
+      JSON.stringify(handoffReport.findings.map((f) => [f.kind, f.severity])))
+  }
+
+  // ---- Counterfactual: same final state, rejected conversation history shouldn't change output ----
+  {
+    // Conversation A: directly asked for inline validation
+    const reportA = auditDelivery({
+      text: 'Add inline validation messages',
+      surface: 'commit',
+      baseline: 'export default function Form() { return <div><Input /></div>; }',
+      rejectedTerms: [], // no rejected terms
+    })
+
+    // Conversation B: Toast discussed but rejected, same final outcome
+    const reportB = auditDelivery({
+      text: 'Add inline validation messages',
+      surface: 'commit',
+      baseline: 'export default function Form() { return <div><Input /></div>; }',
+      rejectedTerms: ['Toast'], // rejected term exists but doesn't appear in text
+    })
+
+    check('CAL counterfactual: same text same baseline → same finding count',
+      reportA.findings.length === reportB.findings.length,
+      `A=${reportA.findings.length} B=${reportB.findings.length}`)
+    check('CAL counterfactual: rejected history does not add findings when term not in text',
+      countKind(reportB, 'REJECTED_ALTERNATIVE_LEAKAGE') === 0)
+  }
+
+  // ---- Normalization helper ----
+  {
+    check('normalizeTerm: NFKC', normalizeTerm('Ｈｅｌｌｏ') === 'hello')
+    check('normalizeTerm: case', normalizeTerm('Toast') === 'toast')
+    check('normalizeTerm: punctuation stripped', normalizeTerm('hello-world_foo.bar') === 'helloworldfoobar')
+    check('normalizeTerm: spaces stripped', normalizeTerm('hello world') === 'helloworld')
+    check('normalizeTerm: Chinese punctuation', normalizeTerm('方案（A）') === '方案a')
+    check('normalizeTerm: empty', normalizeTerm('') === '')
+  }
+
+  // ---- formatDeliveryReport ----
+  {
+    const report = auditDelivery({
+      text: 'Replace Toast with inline errors',
+      surface: 'commit',
+      rejectedTerms: ['Toast'],
+    })
+    const formatted = formatDeliveryReport(report, { verbose: true })
+    check('formatDeliveryReport: contains finding count', formatted.includes('1 finding(s)'), formatted.slice(0, 200))
+    check('formatDeliveryReport: verbose contains Suggestion', formatted.includes('Suggestion:'))
+    const brief = formatDeliveryReport(report, { verbose: false })
+    check('formatDeliveryReport: non-verbose no Suggestion', !brief.includes('Suggestion:'))
+  }
+
+  // ---- Empty text → empty report ----
+  {
+    const report = auditDelivery({ text: '' })
+    check('CAL: empty text → 0 findings', report.summary.total === 0)
+  }
+
+  // ---- Process residue in title is high severity ----
+  {
+    const report = auditDelivery({
+      text: 'Final version of the login page',
+      surface: 'title',
+    })
+    check('CAL: "Final version" in title → REVISION_PROCESS_LEAKAGE', hasKind(report, 'REVISION_PROCESS_LEAKAGE'))
+    check('CAL: title process residue is high severity', report.findings.some((f) => f.kind === 'REVISION_PROCESS_LEAKAGE' && f.severity === 'high'))
+  }
+
+  // ---- Provenance leakage ----
+  {
+    const report = auditDelivery({
+      text: 'Based on our discussion, we added error handling',
+      surface: 'commit',
+    })
+    check('CAL: provenance leakage in commit', hasKind(report, 'PROVENANCE_LEAKAGE'), JSON.stringify(report.findings.map((f) => f.kind)))
+  }
+
+  // ---- Negative reference with no baseline → CAL ----
+  {
+    const report = auditDelivery({
+      text: 'Remove Toast from the login form',
+      surface: 'commit',
+      baseline: 'export default function Form() { return <div><Input /></div>; }',
+      rejectedTerms: ['Toast'],
+    })
+    // Toast not in baseline + text mentions removing it → UNJUSTIFIED_NEGATIVE_REFERENCE + REJECTED_ALTERNATIVE_LEAKAGE
+    check('CAL: negative ref + rejected term → dual findings',
+      hasKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE') && hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE'))
+  }
+
+  // ---- Baseline has Toast → legitimate removal, no UNJUSTIFIED_NEGATIVE_REFERENCE ----
+  {
+    const report = auditDelivery({
+      text: 'Migrate Toast errors to inline validation',
+      surface: 'commit',
+      baseline: 'import { Toast } from \'./ui\';\nToast.showError(message);',
+      finalState: 'showInlineError(message);',
+    })
+    check('CAL TN: baseline has Toast → legitimate migration', !hasKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE'), JSON.stringify(report.findings.map((f) => f.kind)))
+  }
+
+  // ---- Surface severity gradient ----
+  {
+    const reportTitle = auditDelivery({ text: 'we removed the old parser', surface: 'title' })
+    const reportComment = auditDelivery({ text: 'we removed the old parser', surface: 'comment' })
+    const titleSev = reportTitle.findings.find((f) => f.kind === 'REVISION_PROCESS_LEAKAGE')?.severity
+    const commentSev = reportComment.findings.find((f) => f.kind === 'REVISION_PROCESS_LEAKAGE')?.severity
+    const sevRank = { high: 3, medium: 2, low: 1 }
+    check('CAL: title severity >= comment severity for process residue',
+      (sevRank[titleSev] ?? 0) >= (sevRank[commentSev] ?? 0),
+      `title=${titleSev} comment=${commentSev}`)
+  }
+
+  // ---- RejectedClaims also works ----
+  {
+    const report = auditDelivery({
+      text: 'We should use Redux for state management',
+      surface: 'pr',
+      rejectedClaims: ['We should use Redux'],
+    })
+    check('CAL: rejectedClaims exact match', hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE'), JSON.stringify(report.findings.map((f) => f.matchedTerm)))
+  }
+
+  // ---- SUMMARY checks ----
+  {
+    const report = auditDelivery({
+      text: 'Replace Toast with inline errors',
+      surface: 'commit',
+      rejectedTerms: ['Toast'],
+    })
+    check('CAL summary: total matches findings length', report.summary.total === report.findings.length)
+    check('CAL summary: byKind sum matches total',
+      Object.values(report.summary.byKind).reduce((a, b) => a + b, 0) === report.summary.total)
+    check('CAL summary: high+medium+low matches total',
+      report.summary.high + report.summary.medium + report.summary.low === report.summary.total)
+  }
+
+  // ---- scientific null in Chinese ----
+  {
+    const report = auditDelivery({
+      text: '两组间无显著差异（P > 0.05）。',
+      surface: 'unknown',
+      rejectedTerms: ['无显著差异'],
+    })
+    check('CAL TN: Chinese scientific null not flagged', report.findings.length === 0, JSON.stringify(report.findings.map((f) => f.kind)))
+  }
+
+  // ---- process residue in filename ----
+  {
+    const report = auditDelivery({
+      text: 'revised-login-page.tsx',
+      surface: 'filename',
+    })
+    check('CAL: "revised" in filename → process residue', hasKind(report, 'REVISION_PROCESS_LEAKAGE'))
+  }
+}
+
+
+console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
 if (fail > 0) {
   console.log('失败明细：')

@@ -22,6 +22,12 @@ import {
   type JournalProfile,
   type JournalDocument,
 } from './rules.ts'
+import {
+  auditDelivery,
+  formatDeliveryReport,
+  type DeliverySurface,
+  type DeliveryAuditOptions,
+} from './delivery.ts'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -504,6 +510,59 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     },
   }))
 
+
+  ctx.tools.register(defineTool({
+    name: 'writing_delivery_audit',
+    description:
+      'Delivery Integrity 审计（CAL 检测）：检测工作上下文中的被否决方案、临时尝试、纠错过程是否泄漏到最终交付物。' +
+      '支持 surfaces: title/heading/filename/comment/test_name/commit/pr/release/handoff。' +
+      '检测：REJECTED_ALTERNATIVE_LEAKAGE（被否决术语泄漏）、REVISION_PROCESS_LEAKAGE（修改过程残留）、' +
+      'PROVENANCE_LEAKAGE（来源泄漏）、UNJUSTIFIED_NEGATIVE_REFERENCE（无依据否定引用）。' +
+      '可传入 baseline（权威基线内容）做基线真实性检查：如果文本说"Remove X"但 X 不在 baseline 中，则为 CAL。' +
+      '可传入 rejectedTerms/rejectedClaims 提供被否决上下文。' +
+      '零网络零 LLM，纯本地确定性规则。' +
+      `（dsh-plugin-writing-guard v${PLUGIN_VERSION}）`,
+    parameters: {
+      text: { type: 'string', description: '要检查的交付物文本内容' },
+      surface: {
+        type: 'string',
+        enum: ['title', 'heading', 'filename', 'comment', 'test_name', 'commit', 'pr', 'release', 'handoff', 'unknown'],
+        description: '交付物表面类型（可选，默认 unknown）',
+      },
+      baseline: { type: 'string', description: '权威基线内容（如前一个 commit、当前仓库状态）——用于基线真实性检查' },
+      finalState: { type: 'string', description: '观察到的最终状态（如编辑后的代码）' },
+      rejectedTerms: { type: 'array', items: { type: 'string' }, description: '被否决上下文中的术语列表（如 ["Toast", "方案A"]）' },
+      rejectedClaims: { type: 'array', items: { type: 'string' }, description: '被否决上下文中的主张列表（如 ["We should use Redux"]）' },
+      verbose: { type: 'boolean', description: 'true 时输出每条问题的证据和建议（默认 false）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const text = args.text as string | undefined
+      if (!text || !text.trim()) {
+        throw new Error('需要提供 text（内容不能为空）')
+      }
+      const surface = (args.surface as DeliverySurface) ?? 'unknown'
+      const opts: DeliveryAuditOptions = {
+        text,
+        surface,
+      }
+      if (typeof args.baseline === 'string' && args.baseline) opts.baseline = args.baseline
+      if (typeof args.finalState === 'string' && args.finalState) opts.finalState = args.finalState
+      if (Array.isArray(args.rejectedTerms)) {
+        opts.rejectedTerms = args.rejectedTerms.filter((x): x is string => typeof x === 'string')
+      }
+      if (Array.isArray(args.rejectedClaims)) {
+        opts.rejectedClaims = args.rejectedClaims.filter((x): x is string => typeof x === 'string')
+      }
+      const report = auditDelivery(opts)
+      const verbose = args.verbose as boolean | undefined
+      return formatDeliveryReport(report, { verbose })
+    },
+  }))
 
   ctx.tools.register(defineTool({
     name: 'writing_rules',
