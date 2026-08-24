@@ -3,20 +3,21 @@
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
-**Less AI. More Evidence. Better Journal Fit.**
+**Less AI. More Evidence. Better Journal Fit. Clean Delivery.**
 
 Writing Guard is a research-paper writing guard for DeepSeek Harness:
 it reduces mechanical, templated and defensive AI writing,
 protects research facts and scientific commitments during AI-assisted revision,
-and calibrates a manuscript's writing distributions against representative target-journal papers.
+calibrates a manuscript's writing distributions against representative target-journal papers,
+and detects context-to-artifact leakage in final deliverables.
 
-> **Language can change. Evidence cannot.**
+> **Language can change. Evidence cannot. Rejected alternatives should not leak.**
 
 **Local · Deterministic · Zero Network · Zero LLM**
 
 ---
 
-## Three pillars: STYLE / EVIDENCE / JOURNAL
+## Four pillars: STYLE / EVIDENCE / JOURNAL / DELIVERY
 
 1. **Less AI / STYLE**
    Detect and reduce mechanical, templated, over-defensive AI writing — revision residue, defensive writing, hollow buzzwords and structural tells. We do not hide AI use; we remove bad AI writing.
@@ -27,6 +28,10 @@ and calibrates a manuscript's writing distributions against representative targe
 
 3. **Better Journal Fit / JOURNAL**
    Distill section-level writing distributions, scientific claim patterns and rhetorical moves from representative target-journal papers. It is not only about wording — it compares what each section typically says and in what order.
+
+4. **Clean Delivery / DELIVERY**
+   Detects context-to-artifact leakage: rejected alternatives, revision history, or working-context residue that leaks into final deliverables without support from the authoritative baseline. CAL = Context-to-Artifact Leakage (an engineering term, not academic).
+   > Language can change. Evidence cannot. Rejected alternatives should not leak.
 
 ## Quick Start
 

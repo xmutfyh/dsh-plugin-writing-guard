@@ -1,24 +1,25 @@
-# DSH Writing Guard
+﻿# DSH Writing Guard
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
-**去 AI 腔 · 守住证据 · 写向目标期刊**
+**去 AI 腔 · 守住证据 · 写向目标期刊 · 交付物清洁**
 
 Writing Guard 是面向 DeepSeek Harness 的科研论文写作守卫：
 减少机械化、模板化和防御性的 AI 写作，
 保护 AI 润色前后的科研事实与 scientific commitments，
-并根据目标期刊代表论文校准 manuscript 的写作分布。
+根据目标期刊代表论文校准 manuscript 的写作分布，
+并检测工作上下文和被否决方案无依据地泄漏到最终交付物。
 
-> **Less AI. More Evidence. Better Journal Fit.**
+> **Less AI. More Evidence. Better Journal Fit. Clean Delivery.**
 >
-> Language can change. Evidence cannot.
+> Language can change. Evidence cannot. Rejected alternatives should not leak.
 
 **Local · Deterministic · Zero Network · Zero LLM**
 
 ---
 
-## STYLE / EVIDENCE / JOURNAL 三大支柱
+## STYLE / EVIDENCE / JOURNAL / DELIVERY 四大支柱
 
 1. **去 AI 腔 / STYLE**
    识别并减少机械化、模板化、过度防御的 AI 写作，包括 revision residue、defensive writing、空洞热词与结构化套话。不是隐藏 AI，而是消除 AI 带来的坏写作。
@@ -29,6 +30,10 @@ Writing Guard 是面向 DeepSeek Harness 的科研论文写作守卫：
 
 3. **写向目标期刊 / JOURNAL**
    从目标期刊代表论文中蒸馏 section-level 写作分布、科学主张模式与 rhetorical moves。不是只学“怎么措辞”，也比较目标期刊各章节通常“写什么、按什么顺序写”。
+4. **交付物清洁 / DELIVERY**
+   检测工作上下文、被否决方案和修改过程无事实依据地泄漏到最终成品。CAL = Context-to-Artifact Leakage，是工程术语。
+   > 语言可以改，证据不能改，被否决的方案不能泄漏到成品。
+
 
 ## Quick Start
 

@@ -4,6 +4,57 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-08-18
+
+### Added — DELIVERY 第四支柱：Context-to-Artifact Leakage (CAL) 检测
+
+- **`writing_delivery_audit` 工具**：新增第四检测层 DELIVERY，与 STYLE / EVIDENCE / JOURNAL 并列。
+  检测工作上下文、被否决方案和修改过程无事实依据地泄漏到最终成品。
+  CAL = Context-to-Artifact Leakage（工程术语，非学术术语）。
+- **`DELIVERY_CANDIDATE` 发现种类**：当 baseline 不可用且文本包含删除/替换动作时，
+  以 low confidence 发出候选警告（不编造事实）。
+- **`REJECTED_ALTERNATIVE_LEAKAGE` 重写**：
+  - NFKC 归一化 + 保留空格的 `normForMatch`，支持全角字符匹配（方案Ａ ↔ 方案 A）。
+  - 字符边界检查：防止 "toast" 在 "toasted" 中误匹配、"cat" 在 "catalog" 中误匹配。
+  - 逐匹配 per-match 保护：±40 字符窗口内命中 PROTECTED_NEGATION 时抑制，
+    取代旧的全文本 whole-text gate。
+  - 停用词防护：独立的 "no/not/without/remove/不/没有/删除/不再" 等单独作为
+    rejectedTerms 时永远不产生高置信度发现。
+  - 去重：相同归一化形式的多个 rejectedTerms 只产生一个发现。
+- **`checkDefensiveHedge`**：检测 "we do not claim X" + X 在被否决上下文中的情况，
+  产生 REVISION_PROCESS_LEAKAGE（置信度 medium）。建议保留底层科学内容，
+  仅重新考虑防御性修饰语是否必要。排除 "establish/indicate/suggest"，
+  确保 "does not establish causality" 不被误报。
+- **`PROTECTED_NEGATION` 扩展**：
+  - EN：`do not establish/imply/indicate/suggest/demonstrate/support/show`、
+    `cannot conclude/confirm/claim/determine/rule out`、
+    `must not be`、`will/would not retry`。
+  - ZH：`未证明/表明/显示/证实/建立`、`不构成`、`不表示`、`不得/不能/不可重试`。
+- **token 级基线匹配**：`existsInBaseline` 新增 ASCII 词（≥3 字符）+ CJK 二元组级别
+  匹配，防止 "Toast errors" ↔ "Toast notifications" 的真实迁移误报。
+- **`取消` 动作识别**：中文 ACTION_SUBJECT_PATTERNS 和 REAL_ACTION 新增 `取消`，
+  支持 "取消抽奖环节，改为现场互动" 模式。
+- **`hasRejectionContext` 门控**：当调用方已提供 rejectedTerms/rejectedClaims 时，
+  DELIVERY_CANDIDATE 不再触发（因为有更准确的 UNJUSTIFIED_NEGATIVE_REFERENCE）。
+  baseline 可用时 baseline 可用时仍照常执行 UNJUSTIFIED 检查。
+- **反事实对验证**：同一最终产物 + 不同被否决历史 → 合规结论不变（B 的
+  交付物提及被否决术语时产生 CAL 发现，A 不产生）。
+
+### Limitations
+
+- 确定性规则无法可靠检测所有语义改写（semantic paraphrase），只能覆盖
+  可以用正则 + 归一化匹配表达的泄漏模式。
+
+### Tests
+
+- 新增 Section 97：28 个 v1.7.0 回归测试，覆盖 Spec A（ZH 取消）、
+  Spec B（coding Toast + UNJUSTIFIED 双发）、Spec C（科学防御修饰语），
+  以及 must-not-alarm 保护（科学零结果/安全声明/不含花生/不得重试）、
+  真实迁移 TN、token 级匹配、反事实对、NFKC 全角匹配、停用词防护、
+  surface 严重度、DELIVERY_CANDIDATE、防御修饰语检测、summary 完整性。
+
+- `PLUGIN_VERSION` 1.6.2 → 1.7.0。
+
 ## [1.6.2] - 2026-08-17
 
 ### Added / Fixed — Rhetorical Semantics Hardening

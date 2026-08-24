@@ -85,6 +85,71 @@ export function normalizeTerm(s: string): string {
     .replace(/[\s\p{P}\p{S}\p{Z}]/gu, '')
 }
 
+/**
+ * Space-preserving normalization for matching. NFKC + case-fold; punctuation/
+ * whitespace/separators collapse to a single space (not stripped) so that word
+ * boundaries are preserved.  Returns the normalized string and a map from
+ * normalized-index → original-index for accurate snippet extraction.
+ *
+ * Boundary checking against the normalized text (adjacent char must NOT be
+ * [a-z0-9]) prevents substring FPs ("toast" inside "toasted", "cat" inside
+ * "catalog").
+ */
+function normForMatch(s: string): { norm: string; toOrig: (ni: number) => number } {
+  const str = s.normalize('NFKC')
+  const norm: string[] = []
+  const map: number[] = []
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i]
+    // eslint-disable-next-line no-misleading-character-class
+    if (/^[\s\p{P}\p{S}\p{Z}]$/u.test(ch)) {
+      if (norm.length > 0 && norm[norm.length - 1] !== ' ') {
+        norm.push(' ')
+        map.push(i)
+      }
+    } else {
+      norm.push(ch.toLowerCase())
+      map.push(i)
+    }
+  }
+  const joined = norm.join('')
+  return {
+    norm: joined,
+    toOrig: (ni: number) => (ni < map.length ? map[ni] : Math.max(0, str.length - 1)),
+  }
+}
+
+/**
+ * Convert a space-preserving normalized term into a search regex string.
+ * Spaces become \s (whitespace), other characters are escaped.
+ */
+function termNormToRegex(termNorm: string): string {
+  let re = ''
+  for (const ch of termNorm) {
+    if (ch === ' ') re += '\\s'
+    // eslint-disable-next-line no-misleading-character-class
+    else if (/^[a-z0-9\u4e00-\u9fff]$/u.test(ch)) re += ch
+    else re += '\\' + ch
+  }
+  return re
+}
+
+/**
+ * Generic negative / stop words that must never, on their own, constitute
+ * evidence of a rejected term.  Covers EN (no/not/without/remove/replace/
+ * delete/drop) and ZH (不/没有/删除/不再/移除/取消/替换/替代/去除/去掉).
+ * Multi-word phrases are omitted; the guard checks single normalized tokens.
+ */
+const GENERIC_NEGATIVE_TERMS = new Set<string>([
+  'no', 'not', 'none', 'without',
+  'remove', 'removes', 'removed', 'removing',
+  'replace', 'replaces', 'replaced', 'replacing',
+  'delete', 'deletes', 'deleted', 'deleting',
+  'drop', 'drops', 'dropped', 'dropping',
+  '不', '没', '没有', '无', '不再',
+  '删除', '移除', '取消', '替换', '替代', '去除', '去掉',
+])
+
 /** Extract a short snippet around a match index */
 function snippetAround(text: string, idx: number, radius = 40): string {
   const start = Math.max(0, idx - radius)
@@ -115,6 +180,11 @@ const PROTECTED_NEGATION_EN = [
   /\bno\s+(?:known|reported|documented)\s+(?:adverse|serious|major)\b/i,
   /\bdoes\s+not\s+contain\b/i,
   /\bnon[_-]?inferior(?:ity)?\b/i,
+  // scientific / epistemic protection (v1.7.0)
+  /\b(?:do|did|does)\s+not\s+(?:establish|imply|indicate|suggest|demonstrate|support|show)\b/i,
+  /\b(?:cannot|can\s+not)\s+(?:establish|conclude|confirm|claim|determine|rule\s+out)\b/i,
+  /\b(?:must|shall)\s+not\s+be\b/i,
+  /\b(?:will|would)\s+not\s+(?:retry|repeat)\b/i,
 ]
 
 const PROTECTED_NEGATION_ZH = [
@@ -126,6 +196,11 @@ const PROTECTED_NEGATION_ZH = [
   /无不良/,
   /无[任何已知]/,
   /无证据[表显]明/,
+  // scientific / compliance protection (v1.7.0)
+  /(?:未|不)(?:证明|表明|显示|证实|建立)/,
+  /不构成/,
+  /不表示/,
+  /(?:不得|不能|不可)(?:重试|重复)/,
 ]
 
 /** Scientific null finding / safety statement → suppress */
@@ -156,6 +231,7 @@ const REAL_ACTION_ZH = [
   /不再支持/,
   /升级到/,
   /改为/,
+  /取消/,   // v1.7.0 — "取消抽奖环节"
 ]
 
 // ─── Process Residue Detection (surface-aware) ──────────────────────────────
@@ -258,39 +334,69 @@ function checkRejectedAlternative(
   surface: DeliverySurface,
 ): DeliveryFinding[] {
   const findings: DeliveryFinding[] = []
-  const normalizedText = normalizeTerm(text)
+  if (!text || rejectedTerms.length === 0) return findings
 
-  // If the text is a protected negation (scientific null, safety statement),
-  // suppressed rejected alternative leakage — the term appears in a legitimate
-  // scientific/safety context, not as CAL.
-  if (isProtectedNegation(text)) return findings
+  const { norm: normText, toOrig } = normForMatch(text)
+  const seen = new Set<string>() // dedupe by normalized term (spaces stripped)
 
   for (const term of rejectedTerms) {
-    const normalized = normalizeTerm(term)
-    if (!normalized) continue
+    const normTerm = normForMatch(term).norm
+    if (!normTerm) continue
 
-    const idx = normalizedText.indexOf(normalized)
-    if (idx === -1) continue
+    // Stopword guard: standalone negatives can never be evidence on their own
+    if (GENERIC_NEGATIVE_TERMS.has(normTerm)) continue
 
-    // Exact normalized hit → high confidence
-    findings.push({
-      kind: 'REJECTED_ALTERNATIVE_LEAKAGE',
-      severity: surface === 'title' || surface === 'filename' ? 'high' : 'medium',
-      confidence: 'high',
-      evidence: [
-        `Text contains rejected term "${term}" (normalized: "${normalized}")`,
-        `Surface: ${surface}`,
-      ],
-      reason:
-        `The term "${term}" was explicitly rejected in the working context but appears in the final ${surface}. ` +
-        `This is Context-to-Artifact Leakage (CAL): the rejected alternative should not appear in deliverables.`,
-      suggestion:
-        `Remove or rephrase to avoid referencing the rejected alternative "${term}". ` +
-        `If the term is necessary for context, ensure the phrasing makes clear it was rejected.`,
-      surface,
-      matchedTerm: term,
-      snippet: snippetAround(text, idx),
-    })
+    const dedupeKey = normalizeTerm(term) // spaces stripped for deduplication
+
+    // Search for the term using a regex with \s for spaces, then enforce
+    // character boundaries so that "toast" does not match inside "toasted"
+    // and "cat" does not match inside "catalog".
+    const re = new RegExp(termNormToRegex(normTerm), 'gi')
+    let foundMatch = false
+
+    // eslint-disable-next-line no-continue
+    for (const m of normText.matchAll(re)) {
+      const idx = m.index ?? 0
+      const end = idx + m[0].length
+
+      // Boundary check: adjacent characters must NOT be [a-z0-9] (ASCII word chars)
+      const prev = idx === 0 ? '' : normText[idx - 1]
+      const next = end < normText.length ? normText[end] : ''
+      if (/[a-z0-9]/.test(prev) || /[a-z0-9]/.test(next)) continue
+
+      // Per-match protection: check if this specific occurrence sits inside
+      // a legitimate scientific / safety / compliance context.
+      const ctxStart = Math.max(0, idx - 40)
+      const ctxEnd = Math.min(normText.length, end + 40)
+      const context = normText.slice(ctxStart, ctxEnd)
+      if (isProtectedNegation(context)) continue
+
+      if (seen.has(dedupeKey)) break // already reported this term
+      seen.add(dedupeKey)
+
+      findings.push({
+        kind: 'REJECTED_ALTERNATIVE_LEAKAGE',
+        severity: surface === 'title' || surface === 'filename' ? 'high' : 'medium',
+        confidence: 'high',
+        evidence: [
+          `Text contains rejected term "${term}"`,
+          `Surface: ${surface}`,
+        ],
+        reason:
+          `The term "${term}" was explicitly rejected in the working context but appears in the final ${surface}. ` +
+          `This is Context-to-Artifact Leakage (CAL): the rejected alternative should not appear in deliverables.`,
+        suggestion:
+          `Remove or rephrase to avoid referencing the rejected alternative "${term}". ` +
+          `If the term is necessary for context, ensure the phrasing makes clear it was rejected.`,
+        surface,
+        matchedTerm: term,
+        snippet: snippetAround(text, toOrig(idx)),
+      })
+      foundMatch = true
+      break // one finding per term
+    }
+
+    if (!foundMatch) continue
   }
 
   return findings
@@ -322,6 +428,8 @@ const ACTION_SUBJECT_PATTERNS_ZH: Array<{ action: RegExp; subjectGroup: number }
   { action: /替[换代]了?\s*(.{2,30}?)\s*(?:为|成)/, subjectGroup: 1 },
   // "不再使用 X" → subject = "X"
   { action: /不再(?:使用|采用|支持)\s*(.{2,30}?)(?:[。,;]|$)/, subjectGroup: 1 },
+  // "取消 X" → subject = "X"  (v1.7.0 — "取消抽奖环节，改为现场互动")
+  { action: /取消[了]?\s*(.{2,30}?)(?:[。,;]|$)/, subjectGroup: 1 },
   // "改为 X" — no subject to check (replacing something unspecified)
 ]
 
@@ -337,8 +445,30 @@ function coreSubject(raw: string): string {
 }
 
 /**
+ * Extract significant tokens from a subject: ASCII words (≥3 chars) and
+ * CJK bigrams.  Used for token-level baseline matching (v1.7.0) so that
+ * "Toast errors" matches a baseline containing "Toast notifications".
+ */
+function subjectTokens(subject: string): string[] {
+  const str = subject.normalize('NFKC').toLowerCase()
+  const tokens: string[] = []
+  for (const m of str.matchAll(/[a-z0-9][a-z0-9_]*/g)) {
+    if (m[0].length >= 3) tokens.push(m[0])
+  }
+  for (const run of str.matchAll(/[\u4e00-\u9fff]{2,}/g)) {
+    for (let i = 0; i + 1 < run[0].length; i++) {
+      tokens.push(run[0].slice(i, i + 2))
+    }
+  }
+  return tokens
+}
+
+/**
  * Check if a substring exists in the baseline text (normalized match).
- * Tries both the full subject and the core subject (without leading articles/adjectives).
+ * Tries full subject → core subject → token-level (v1.7.0).
+ * Token level prevents real-migration false positives where the full
+ * subject spans across words differently (e.g. "Toast errors" ↔
+ * "Toast notifications").
  */
 function existsInBaseline(subject: string, baseline?: string): boolean {
   if (!baseline) return false
@@ -350,6 +480,13 @@ function existsInBaseline(subject: string, baseline?: string): boolean {
   // Try core subject (strip leading articles/adjectives)
   const core = normalizeTerm(coreSubject(subject))
   if (core.length >= 2 && normBaseline.includes(core)) return true
+
+  // Token level (v1.7.0): if any significant token from the subject appears
+  // in the baseline, the reference is likely real (e.g. "Toast errors" ↔
+  // "Toast notifications" both share the token "toast").
+  for (const tok of subjectTokens(subject)) {
+    if (normBaseline.includes(tok)) return true
+  }
 
   return false
 }
@@ -363,8 +500,45 @@ function checkBaselineReality(
   baseline: string | undefined,
   finalState: string | undefined,
   surface: DeliverySurface,
+  hasRejectionContext: boolean,
 ): DeliveryFinding[] {
-  if (!baseline) return [] // no baseline → can't check → no findings
+  // No baseline available: emit a low-confidence DELIVERY_CANDIDATE when
+  // there is no rejection context (spec: never fabricate facts; lower
+  // confidence when baseline is unavailable).
+  if (!baseline) {
+    if (hasRejectionContext) return []
+    const patterns = [...ACTION_SUBJECT_PATTERNS_EN, ...ACTION_SUBJECT_PATTERNS_ZH]
+    for (const { action, subjectGroup } of patterns) {
+      const m = action.exec(text)
+      if (!m) continue
+      const subject = m[subjectGroup]?.trim()
+      if (!subject || subject.length < 2) continue
+      // If the subject exists in the observed final state, the reference
+      // is grounded — suppress the candidate.
+      if (existsInBaseline(subject, finalState)) continue
+      return [
+        {
+          kind: 'DELIVERY_CANDIDATE',
+          severity: 'low',
+          confidence: 'low',
+          evidence: [
+            `Action pattern "${m[0].trim()}" references "${subject}"`,
+            `No baseline provided — cannot verify "${subject}" against the authoritative state`,
+          ],
+          reason:
+            `The text describes removing/replacing "${subject}", but no baseline was supplied. ` +
+            `Whether this is a real deletion or Context-to-Artifact Leakage cannot be determined automatically.`,
+          suggestion:
+            `Provide the baseline (authoritative state) so the tool can verify whether "${subject}" existed, ` +
+            `or manually confirm the reference before publishing.`,
+          surface,
+          matchedTerm: subject,
+          snippet: snippetAround(text, m.index ?? 0),
+        },
+      ]
+    }
+    return []
+  }
 
   const findings: DeliveryFinding[] = []
   const patterns = [...ACTION_SUBJECT_PATTERNS_EN, ...ACTION_SUBJECT_PATTERNS_ZH]
@@ -482,6 +656,94 @@ function checkProvenanceLeakage(
   return findings
 }
 
+// ─── Defensive Hedge (revision-process residue on rejected claims, v1.7.0) ──
+
+/**
+ * Hedging phrases that reference rejected claims ("we do not claim X").
+ * Legitimate scientific hedging ("does not establish causality") is NOT a
+ * hedge — it is protected by PROTECTED_NEGATION and does not fire here.
+ * The hedge only counts as residue when a rejected term/claim appears
+ * verbatim in the text.
+ */
+const HEDGE_PATTERNS_EN: RegExp[] = [
+  /\b(?:do|did|does)\s+not\s+(?:claim|assert|argue|conclude)\b/i,
+  /\b(?:are|is|was|were)\s+not\s+(?:claiming|asserting|arguing)\b/i,
+]
+
+const HEDGE_PATTERNS_ZH: RegExp[] = [
+  /不(?:声称|宣称|主张|认为)/,
+  /未(?:声称|宣称|断言)/,
+]
+
+function checkDefensiveHedge(
+  text: string,
+  rejectedTerms: string[],
+  surface: DeliverySurface,
+): DeliveryFinding[] {
+  const findings: DeliveryFinding[] = []
+  if (!text || rejectedTerms.length === 0) return findings
+
+  const { norm: normText } = normForMatch(text)
+
+  // Check if a rejected term/claim actually appears in the text (with
+  // boundary checking, same logic as checkRejectedAlternative).
+  let rejectedPresent = false
+  let rejectedHit = ''
+  for (const term of rejectedTerms) {
+    const normTerm = normForMatch(term).norm
+    if (!normTerm || GENERIC_NEGATIVE_TERMS.has(normTerm)) continue
+    const re = new RegExp(termNormToRegex(normTerm), 'gi')
+    for (const m of normText.matchAll(re)) {
+      const idx = m.index ?? 0
+      const end = idx + m[0].length
+      const prev = idx === 0 ? '' : normText[idx - 1]
+      const next = end < normText.length ? normText[end] : ''
+      if (/[a-z0-9]/.test(prev) || /[a-z0-9]/.test(next)) continue
+      rejectedPresent = true
+      rejectedHit = term
+      break
+    }
+    if (rejectedPresent) break
+  }
+  if (!rejectedPresent) return findings
+
+  // Look for a defensive hedge pattern near the rejected-term occurrence
+  for (const pattern of [...HEDGE_PATTERNS_EN, ...HEDGE_PATTERNS_ZH]) {
+    const m = pattern.exec(text)
+    if (!m) continue
+
+    // Check context: if the hedge itself sits inside a protected scientific/
+    // safety / compliance context, suppress — it's legitimate language.
+    const mIdx = m.index ?? 0
+    const start = Math.max(0, mIdx - 40)
+    const end = Math.min(text.length, mIdx + m[0].length + 40)
+    if (isProtectedNegation(text.slice(start, end))) continue
+
+    findings.push({
+      kind: 'REVISION_PROCESS_LEAKAGE',
+      severity: surface === 'title' || surface === 'commit' ? 'medium' : 'low',
+      confidence: 'medium',
+      evidence: [
+        `Defensive hedge "${m[0].trim()}" references rejected context`,
+        `Rejected term "${rejectedHit}" appears in the text`,
+      ],
+      reason:
+        `The hedge "${m[0].trim()}" exists only because "${rejectedHit}" was a working-context claim. ` +
+        `Referencing it in the final deliverable is revision-process residue.`,
+      suggestion:
+        `Do NOT delete the underlying scientific statement (e.g. the association result) — that is the core content. ` +
+        `Only reconsider whether the defensive hedge itself ("we do not claim…") is necessary in the final deliverable; ` +
+        `if the rejected claim never existed in earlier drafts, the hedge can be dropped without losing scientific meaning.`,
+      surface,
+      matchedTerm: m[0].trim(),
+      snippet: snippetAround(text, mIdx),
+    })
+    break // one hedge finding
+  }
+
+  return findings
+}
+
 // ─── Main Audit Function ────────────────────────────────────────────────────
 
 /**
@@ -516,10 +778,15 @@ export function auditDelivery(opts: DeliveryAuditOptions): DeliveryAuditReport {
   allFindings.push(...checkProcessResidue(text, surface))
 
   // 3. Baseline reality check (CAL core)
-  allFindings.push(...checkBaselineReality(text, baseline, finalState, surface))
+  allFindings.push(...checkBaselineReality(text, baseline, finalState, surface, allRejected.length > 0))
 
   // 4. Provenance leakage
   allFindings.push(...checkProvenanceLeakage(text, surface))
+
+  // 5. Defensive hedge on rejected claims (revision-process residue, v1.7.0)
+  if (allRejected.length > 0) {
+    allFindings.push(...checkDefensiveHedge(text, allRejected, surface))
+  }
 
   // Build summary
   const summary: DeliveryAuditReport['summary'] = {

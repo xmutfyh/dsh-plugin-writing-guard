@@ -47,7 +47,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.6.2'
+export const PLUGIN_VERSION = '1.7.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -873,7 +873,7 @@ export function computeJournalProfileFromDocuments(
       articleType: opts?.articleType,
       discipline: opts?.discipline,
       sampleSize: opts?.sampleSize ?? parsed,
-      profileVersion: '1.6.2',
+      profileVersion: PLUGIN_VERSION,
       corpusDate: new Date().toISOString().slice(0, 10),
     },
     structure: {

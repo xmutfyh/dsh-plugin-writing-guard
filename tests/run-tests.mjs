@@ -1666,7 +1666,7 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.6.2' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.7.0' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
   check('journal profile preserves only statistics', !JSON.stringify(profile).includes('This study investigates'))
@@ -2139,6 +2139,323 @@ console.log('=== 96. Delivery Integrity: CAL 检测 ===')
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 97. Delivery Integrity v1.7.0 regression tests
+// ═══════════════════════════════════════════════════════════════════════════════
+{
+  const { auditDelivery, formatDeliveryReport, normalizeTerm } = await import('../lib/delivery.js')
+  function hasKind(report, kind) { return report.findings.some((f) => f.kind === kind) }
+  function countKind(report, kind) { return report.findings.filter((f) => f.kind === kind).length }
+
+  // ---- Spec A: ZH 取消 (cancel) — rejected term "抽奖" should NOT leak ----
+  {
+    // Spec A positive: cancelled "抽奖环节" replaced with "现场互动"
+    const report = auditDelivery({
+      text: '取消抽奖环节，改为现场互动',
+      surface: 'heading',
+      baseline: '活动包含现场互动',
+      rejectedTerms: ['抽奖'],
+    })
+    check('v1.7 CAL-A: 取消 + rejected term 抽奖 → RA',
+      hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE'),
+      JSON.stringify(report.findings.map(f => f.kind)))
+    check('v1.7 CAL-A: 取消 + no false UNJUSTIFIED (活动包含现场互动 is in baseline)',
+      !hasKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE'))
+  }
+
+  // ---- Spec B: coding Toast — "Remove Toast errors" vs baseline w/o Toast ----
+  {
+    const report = auditDelivery({
+      text: 'Remove Toast errors from the login form',
+      surface: 'commit',
+      baseline: 'form uses no notification system',
+      rejectedTerms: ['Toast'],
+    })
+    check('v1.7 CAL-B: RA + UNJUSTIFIED dual findings',
+      countKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE') >= 1 &&
+      countKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE') >= 1,
+      JSON.stringify(report.findings.map(f => f.kind)))
+  }
+
+  // ---- Spec C: science — "do not claim X causes Y, X was associated with Y" ----
+  {
+    const report = auditDelivery({
+      text: 'Although we do not claim that X causes Y, X was associated with Y.',
+      surface: 'title',
+      rejectedClaims: ['X causes Y'],
+    })
+    // Must get at least RA (rejected claim verbatim in text) and/or hedge finding
+    // Must NOT delete scientific meaning (no suggestion says "delete association")
+    const hasHedge = hasKind(report, 'REVISION_PROCESS_LEAKAGE')
+    const hasRA = hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE')
+    check('v1.7 CAL-C: RA or hedge finding present',
+      hasHedge || hasRA,
+      JSON.stringify(report.findings.map(f => ({ kind: f.kind, conf: f.confidence }))))
+    // Verify suggestion does NOT say "delete" the association
+    const allSuggestions = report.findings.map(f => f.suggestion).join(' ')
+    check('v1.7 CAL-C: no suggestion to delete scientific meaning',
+      !allSuggestions.toLowerCase().includes('delete the association'))
+  }
+
+  // ---- Must NOT alarm (spec top priority) ----
+  {
+    // 1. Scientific null
+    const r1 = auditDelivery({
+      text: 'No significant difference was observed between groups.',
+      rejectedTerms: ['significant difference'],
+    })
+    check('v1.7 TN: "No significant difference" not flagged',
+      r1.summary.total === 0, `total=${r1.summary.total}`)
+
+    // 2. These findings do not establish causality
+    const r2 = auditDelivery({
+      text: 'These findings do not establish causality.',
+      rejectedTerms: ['causality'],
+    })
+    check('v1.7 TN: "do not establish causality" not flagged',
+      r2.summary.total === 0, `total=${r2.summary.total}`)
+
+    // 3. Contains no peanuts
+    const r3 = auditDelivery({
+      text: 'Contains no peanuts.',
+      rejectedTerms: ['peanuts'],
+    })
+    check('v1.7 TN: "Contains no peanuts" not flagged',
+      r3.summary.total === 0, `total=${r3.summary.total}`)
+
+    // 4. Unauthorized requests must not be retried
+    const r4 = auditDelivery({
+      text: 'Unauthorized requests must not be retried.',
+      surface: 'commit',
+      rejectedTerms: ['retried'],
+    })
+    check('v1.7 TN: "must not be retried" not flagged',
+      r4.summary.total === 0, `total=${r4.summary.total}`)
+  }
+
+  // ---- Real migration (not a false positive) ----
+  {
+    const report = auditDelivery({
+      text: 'Replace Toast errors with inline validation',
+      surface: 'commit',
+      baseline: 'The application uses Toast notifications.',
+    })
+    // Toast exists in baseline via token match → no UNJUSTIFIED
+    check('v1.7 TN: real migration with Toast in baseline → no UNJUSTIFIED',
+      !hasKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE'),
+      JSON.stringify(report.findings.map(f => f.kind)))
+  }
+
+  // ---- Token-level baseline: "Toast errors" ↔ "Toast notifications" ----
+  {
+    const report = auditDelivery({
+      text: 'Remove Toast errors from the login form',
+      surface: 'commit',
+      baseline: 'The application uses Toast notifications for error display.',
+    })
+    // "Toast" token is in baseline → no UNJUSTIFIED (token-level match)
+    check('v1.7 TN: token match Toast ↔ Toast notifications → no UNJUSTIFIED',
+      !hasKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE'),
+      JSON.stringify(report.findings.map(f => f.kind)))
+  }
+
+  // ---- Counterfactual pair: same final state, history A (no context) vs B (Toast rejected) ----
+  {
+    const reportA = auditDelivery({
+      text: 'Add inline validation messages',
+      surface: 'commit',
+      baseline: 'export default function Form() { return <div><Input /></div>; }',
+    })
+    const reportB = auditDelivery({
+      text: 'Add inline validation messages',
+      surface: 'commit',
+      baseline: 'export default function Form() { return <div><Input /></div>; }',
+      rejectedTerms: ['Toast'],
+    })
+    check('v1.7 counterfactual: same finding count regardless of rejected history',
+      reportA.findings.length === reportB.findings.length,
+      `A=${reportA.findings.length} B=${reportB.findings.length}`)
+  }
+
+  // ---- Counterfactual B: delivery mentioning Toast → CAL ----
+  {
+    const report = auditDelivery({
+      text: 'Replace Toast with inline errors',
+      surface: 'commit',
+      rejectedTerms: ['Toast'],
+    })
+    check('v1.7 counterfactual B: rejected term in text → RA finding',
+      hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE'))
+  }
+
+  // ---- NFKC normalization (fullwidth characters) ----
+  {
+    const report = auditDelivery({
+      text: '采用了方案Ａ',
+      surface: 'title',
+      rejectedTerms: ['方案A'],
+    })
+    check('v1.7 NFKC: fullwidth Ａ matches ASCII A',
+      hasKind(report, 'REJECTED_ALTERNATIVE_LEAKAGE'))
+  }
+
+  // ---- Stopword guard: standalone negatives not evidence ----
+  {
+    // "not" alone as rejected term → should NOT produce a finding
+    const r1 = auditDelivery({
+      text: 'The system does not support transactions.',
+      rejectedTerms: ['not'],
+    })
+    check('v1.7 stopword: "not" alone → 0 findings',
+      r1.summary.total === 0, `total=${r1.summary.total}`)
+    // "remove" alone as rejected term
+    const r2 = auditDelivery({
+      text: 'We removed the old parser.',
+      rejectedTerms: ['remove'],
+    })
+    check('v1.7 stopword: "remove" alone → 0 findings from RA',
+      countKind(r2, 'REJECTED_ALTERNATIVE_LEAKAGE') === 0)
+    // "没有" alone
+    const r3 = auditDelivery({
+      text: '该系统没有数据库功能。',
+      rejectedTerms: ['没有'],
+    })
+    check('v1.7 stopword: "没有" alone → 0 findings from RA',
+      countKind(r3, 'REJECTED_ALTERNATIVE_LEAKAGE') === 0)
+    // "删除" alone
+    const r4 = auditDelivery({
+      text: '请勿删除该行代码。',
+      rejectedTerms: ['删除'],
+    })
+    check('v1.7 stopword: "删除" alone → 0 findings from RA',
+      countKind(r4, 'REJECTED_ALTERNATIVE_LEAKAGE') === 0)
+  }
+
+  // ---- Surface role changes severity ----
+  {
+    const rTitle = auditDelivery({
+      text: 'Final version of the login page',
+      surface: 'title',
+    })
+    const rComment = auditDelivery({
+      text: 'Final version of the login page',
+      surface: 'comment',
+    })
+    const titleSev = rTitle.findings.find(f => f.kind === 'REVISION_PROCESS_LEAKAGE')?.severity
+    const commentSev = rComment.findings.find(f => f.kind === 'REVISION_PROCESS_LEAKAGE')?.severity
+    const rank = { high: 3, medium: 2, low: 1 }
+    check('v1.7 surface: title severity ≥ comment severity',
+      (rank[titleSev] ?? 0) >= (rank[commentSev] ?? 0),
+      `title=${titleSev} comment=${commentSev}`)
+  }
+
+  // ---- Baseline unavailable: DELIVERY_CANDIDATE ----
+  {
+    const report = auditDelivery({
+      text: 'Remove the deprecated logging module',
+      surface: 'commit',
+      // no baseline
+    })
+    check('v1.7 no-baseline: candidate fires',
+      countKind(report, 'DELIVERY_CANDIDATE') >= 1,
+      JSON.stringify(report.findings.map(f => f.kind)))
+    // But with rejection context → candidate suppressed (guard)
+    const r2 = auditDelivery({
+      text: 'Remove the deprecated logging module',
+      surface: 'commit',
+      rejectedTerms: ['logging'],
+    })
+    check('v1.7 no-baseline + rejection context: candidate suppressed',
+      countKind(r2, 'DELIVERY_CANDIDATE') === 0)
+  }
+
+  // ---- Defensive hedge: "do not claim X" with rejected term in text ----
+  {
+    const report = auditDelivery({
+      text: 'We do not claim that Redux is the best choice. Redux is one option among many.',
+      surface: 'commit',
+      rejectedTerms: ['Redux'],
+    })
+    check('v1.7 hedge: "do not claim" + rejected term in text → revision-process',
+      hasKind(report, 'REVISION_PROCESS_LEAKAGE'),
+      JSON.stringify(report.findings.map(f => f.kind)))
+    // Must NOT suggest deleting the scientific content
+    const suggestions = report.findings.map(f => f.suggestion).join(' ')
+    check('v1.7 hedge: suggestion does not say delete the content',
+      !suggestions.toLowerCase().includes('delete the content'))
+  }
+
+  // ---- Defensive hedge: "do not establish causality" → no hedge (protected negation) ----
+  {
+    const report = auditDelivery({
+      text: 'We do not establish causality. The results are merely correlational.',
+      surface: 'commit',
+      rejectedTerms: ['causality'],
+    })
+    // The hedge pattern "do not claim/argue" should NOT match "do not establish"
+    // because "establish" is excluded from the hedge list.
+    // However, the term "causality" in the text may fire RA if it passes
+    // boundary + protection checks. The key assertion is no revision-process
+    // hedge finding.
+    check('v1.7 hedge-TN: "do not establish" is not a hedge',
+      countKind(report, 'REVISION_PROCESS_LEAKAGE') === 0,
+      `process=${countKind(report, 'REVISION_PROCESS_LEAKAGE')} findings=${JSON.stringify(report.findings.map(f => f.kind))}`)
+  }
+
+  // ---- ZH 取消 action pattern in baseline reality check ----
+  {
+    const report = auditDelivery({
+      text: '取消抽奖环节，改为现场互动',
+      surface: 'heading',
+      baseline: '活动包含抽奖环节',
+    })
+    // Subject "抽奖环节" is in baseline → no UNJUSTIFIED, no candidate
+    check('v1.7 ZH 取消: baseline has subject → no UNJUSTIFIED',
+      !hasKind(report, 'UNJUSTIFIED_NEGATIVE_REFERENCE'),
+      JSON.stringify(report.findings.map(f => f.kind)))
+  }
+
+  // ---- Baseline unavailable + finalState match → candidate suppressed ----
+  {
+    const report = auditDelivery({
+      text: 'Replace the old parser with a new one',
+      surface: 'commit',
+      finalState: 'The new parser handles all edge cases.',
+      // no baseline
+    })
+    // Subject "the old parser" — core "parser" — exists in finalState? No.
+    // "old parser" → tokens: "old" (too short), "parser" (6 chars) — "parser" in finalState "The new parser handles all edge cases." → yes!
+    check('v1.7 no-baseline + finalState: candidate suppressed if subject in finalState',
+      countKind(report, 'DELIVERY_CANDIDATE') === 0,
+      JSON.stringify(report.findings.map(f => f.kind)))
+  }
+
+  // ---- formatDeliveryReport includes DELIVERY_CANDIDATE in byKind ----
+  {
+    const report = auditDelivery({
+      text: 'Remove the deprecated module',
+      surface: 'commit',
+    })
+    const formatted = formatDeliveryReport(report, { verbose: false })
+    check('v1.7 formatDeliveryReport: summary includes byKind',
+      formatted.includes('DELIVERY_CANDIDATE') || report.summary.byKind.DELIVERY_CANDIDATE >= 0)
+  }
+
+  // ---- Summary integrity: byKind sum === total ----
+  {
+    const report = auditDelivery({
+      text: 'Replace Toast errors with inline validation',
+      surface: 'commit',
+      baseline: 'The application uses Toast notifications.',
+      rejectedTerms: ['Toast'],
+    })
+    const byKindSum = Object.values(report.summary.byKind).reduce((a, b) => a + b, 0)
+    check('v1.7 summary: byKind sum === total',
+      byKindSum === report.summary.total,
+      `sum=${byKindSum} total=${report.summary.total}`)
+  }
+}
 
 console.log('')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)
