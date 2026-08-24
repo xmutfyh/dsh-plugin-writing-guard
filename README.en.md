@@ -98,7 +98,7 @@ Journal Fit is reported per section, together with corpus size and confidence.
 
 Journal Fit uses grouped weights: Structure 20% / Voice 10% / Citations 15% / Epistemics 35% / Rhetoric 20%.
 
-## Four DSH Tools
+## Five DSH Tools
 
 | Tool | Purpose |
 |---|---|
@@ -106,6 +106,20 @@ Journal Fit uses grouped weights: Structure 20% / Voice 10% / Citations 15% / Ep
 | `writing_audit` | Main audit entry: checks STYLE issues, compares Scholarship / Epistemic invariants, and can load Style Profile / Journal Profile |
 | `writing_style_profile` | Learns an author's style from previous papers and returns JSON for audit |
 | `writing_journal_profile` | Distills a Journal Profile from target-journal papers and returns JSON for audit |
+| `writing_delivery_audit` | DELIVERY layer: detects rejected alternatives, revision-process residue, and provenance leakage that lack factual support in the authoritative baseline (CAL detection) |
+
+### writing_delivery_audit example
+
+```js
+auditDelivery({
+  text: 'Remove Toast from the login form',
+  surface: 'commit',
+  baseline: 'export default function LoginForm() { return <div><Input /></div>; }',
+  rejectedTerms: ['Toast'],
+})
+// → findings: [REJECTED_ALTERNATIVE_LEAKAGE, UNJUSTIFIED_NEGATIVE_REFERENCE]
+// Toast was rejected and is absent from baseline → both fire
+```
 
 ## Document-aware auditing
 
@@ -175,14 +189,17 @@ Repository: https://github.com/xmutfyh/dsh-plugin-writing-guard
 npm test
 ```
 
-300+ deterministic TP / TN / boundary / regression tests covering:
+380+ deterministic TP / TN / boundary / regression tests covering:
 
 - STYLE, Scholarship Lock, Epistemic Lock
 - Claim alignment, local citation integrity
 - Journal Profile, Journal Fit
 - Rhetorical semantics (Chinese / medoid / transition)
+- **DELIVERY (CAL detection)**: rejected alternative / process residue / baseline reality / provenance / defensive hedge / counterfactual pair / NFKC / stopwords / scientific TN / safety TN / real-migration TN
 
 CI runs build + tests on every push / PR.
+
+> Deterministic rules (regex + normalization) cannot cover every semantic paraphrase. DELIVERY-layer detection is limited to leakage patterns expressible via regular expressions; manual review remains necessary.
 
 ## FAQ
 

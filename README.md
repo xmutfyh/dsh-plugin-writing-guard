@@ -1,4 +1,4 @@
-﻿# DSH Writing Guard
+# DSH Writing Guard
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
@@ -100,7 +100,7 @@ Journal Fit 按章节输出，并同时报告 corpus size 与 confidence。
 
 Journal Fit 采用五组权重：句法结构 20% / 语态人称 10% / 引用 15% / 科学主张 35% / 修辞结构 20%。
 
-## 四个 DSH Tools
+## 五个 DSH Tools
 
 | 工具 | 用途 |
 |---|---|
@@ -108,6 +108,20 @@ Journal Fit 采用五组权重：句法结构 20% / 语态人称 10% / 引用 15
 | `writing_audit` | 主审计入口：检查 STYLE 问题，比较 revision 前后的 Scholarship / Epistemic invariants，并可加载 Style Profile 与 Journal Profile |
 | `writing_style_profile` | 从作者历史论文学习风格指标，输出 JSON 供 audit 使用 |
 | `writing_journal_profile` | 从目标期刊代表论文蒸馏 Journal Profile，输出 JSON 供 audit 使用 |
+| `writing_delivery_audit` | DELIVERY 层：检测被否决方案、修改过程残留与来源泄漏是否无依据地进入最终交付物（CAL 检测） |
+
+### writing_delivery_audit 最小示例
+
+```js
+auditDelivery({
+  text: 'Remove Toast from the login form',
+  surface: 'commit',
+  baseline: 'export default function LoginForm() { return <div><Input /></div>; }',
+  rejectedTerms: ['Toast'],
+})
+// → findings: [REJECTED_ALTERNATIVE_LEAKAGE, UNJUSTIFIED_NEGATIVE_REFERENCE]
+// Toast 被否决且不在 baseline 中 → 双重报警
+```
 
 ## Document-aware auditing
 
@@ -177,14 +191,17 @@ dsh web
 npm test
 ```
 
-300+ 项确定性 TP / TN / boundary / regression 测试，覆盖：
+380+ 项确定性 TP / TN / boundary / regression 测试，覆盖：
 
 - STYLE、Scholarship Lock、Epistemic Lock
 - claim alignment、local citation integrity
 - Journal Profile、Journal Fit
 - Rhetorical semantics（中文 / medoid / transition）
+- **DELIVERY（CAL 检测）**：rejected alternative / process residue / baseline reality / provenance / defensive hedge / counterfactual pair / NFKC / 停用词 / 科学 TN / 安全 TN / 真实迁移 TN
 
 CI 在每次 push / PR 自动执行 build + tests。
+
+> 确定性规则（正则 + 归一化）无法覆盖所有语义改写（semantic paraphrase），DELIVERY 层的检测范围是可用正则表达的泄漏模式，仍需人工 review。
 
 ## FAQ
 
