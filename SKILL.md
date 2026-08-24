@@ -4,10 +4,12 @@ description: >-
   Academic-writing discipline guard (deterministic, zero-network): rewrite/refactor manuscript
   prose to remove AI mechanical phrasing and defensive disclaimers while protecting research facts
   and epistemic integrity (numbers, citations, claim strength, negation, scope must not be silently
-  changed by language polishing).
+  changed by language polishing). Detects context-to-artifact leakage: rejected alternatives,
+  revision history, or working-context residue that leaks into final deliverables (CAL detection).
   论文写作纪律守则（本地规则，零网络）：去 AI 机械感（多重"的"字链、套路过渡词、空洞热词、超长句）、
   清除自黑式免责套话（"基于假数据/模型毫无意义"）、保护科研事实与科学主张完整性
-  （数字/引用/主张强度/否定/scope 不许被语言修改悄悄改变——Scholarship Lock + Epistemic Lock）。
+  （数字/引用/主张强度/否定/scope 不许被语言修改悄悄改变——Scholarship Lock + Epistemic Lock）、
+  检测工作上下文、被否决方案和修改过程无事实依据地泄漏到最终成品（CAL = Context-to-Artifact Leakage）。
   Use when writing, polishing, or refactoring academic papers (LaTeX/Markdown, Chinese/English)
   to achieve publication-ready tone without changing scientific facts.
 ---
@@ -18,7 +20,7 @@ description: >-
 供没有 DSH 的环境（Codex / Claude Code / Antigravity / 任意 agent）在写作与润色时执行。
 所有规则均为确定性正则/统计，零网络零 LLM；源插件还提供 `writing_audit`（扫描）、
 `writing_rules`（速查）、`writing_style_profile`（作者风格档案）、`writing_journal_profile`
-（目标期刊写作档案）工具与 Scholarship Lock 实体对比。
+（目标期刊写作档案）、`writing_delivery_audit`（CAL 检测）工具与 Scholarship Lock 实体对比。
 
 ---
 
@@ -167,6 +169,27 @@ description: >-
   `writing_style_profile` 学习作者历史风格，句长分布向作者靠拢；⑥ 若已有目标期刊，
   用 `writing_journal_profile` 生成/加载 Journal Profile，并用 `writing_audit(journalProfile=...)`
   检查 Journal Fit，但期刊风格调整不得改变 science。
+
+## 9. 交付物清洁（v1.7.0 DELIVERY — CAL 检测）
+
+> 语言可以改，证据不能改，被否决的方案不能泄漏到成品。
+
+- **CAL = Context-to-Artifact Leakage**（工程术语，非学术术语）：检测工作上下文、被否决方案和
+  修改过程无事实依据地泄漏到最终交付物。
+- 用 `writing_delivery_audit` 检查交付物（commit message / title / heading / PR / release notes 等）。
+  可传入 `baseline`（权威基线）做基线真实性检查，传入 `rejectedTerms` / `rejectedClaims` 提供
+  被否决上下文。
+- **检测类型**：REJECTED_ALTERNATIVE_LEAKAGE（被否决术语泄漏）、REVISION_PROCESS_LEAKAGE
+  （修改过程残留）、PROVENANCE_LEAKAGE（来源泄漏）、UNJUSTIFIED_NEGATIVE_REFERENCE
+  （无依据否定引用）、DELIVERY_CANDIDATE（无法验证的声明）。
+- **优先级**：Scientific / Safety / Baseline Truth > Delivery Cleanliness > Style。
+  科学零结果（"No significant difference was observed"）、安全否定（"must not be retried"）、
+  真实迁移（baseline 中有 Toast → "Replace Toast..." 不报警）均受保护。
+- **局限性**：确定性规则无法覆盖所有语义改写（semantic paraphrase），只能覆盖可用正则表达的
+  泄漏模式，仍需人工 review。
+- 示例：`auditDelivery({ text: 'Remove Toast from the login form', surface: 'commit',
+  baseline: 'export default function LoginForm() { ... }', rejectedTerms: ['Toast'] })` →
+  RA + UNJUSTIFIED 双发（Toast 被否决且不在 baseline 中）。
 
 ---
 
