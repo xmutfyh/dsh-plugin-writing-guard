@@ -19,3 +19,7 @@ Thumbs.db
 
 # Codex task runner output
 .codex-last-message.md
+__pycache__/
+*.pyc
+node_modules/
+lib/

@@ -801,6 +801,30 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     },
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'writing_word_audit_equations',
+    description:
+      'Word 文档公式审计（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：对 .docx 中的原生 OMML 公式进行只读审计。' +
+      '报告文档数学字体、公式段落样式、制表位等信息。可选传入基线文档进行格式漂移对比。',
+    parameters: {
+      filePath: { type: 'string', description: '要审计的 .docx 文件路径' },
+      baselinePath: { type: 'string', description: '基线 .docx 文件路径（可选，用于对比）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const filePath = args.filePath as string
+      const baselinePath = args.baselinePath as string | undefined
+      if (!filePath) throw new Error('需要提供 filePath')
+      const args2 = baselinePath ? [filePath, baselinePath] : [filePath]
+      const result = await callWordGuard('audit-equations', ...args2)
+      return result
+    },
+  }))
+
   // ---------- 自动审计：论文文件写入后自动检查并注入结果 ----------
 
   if (cfg.autoAuditOnWrite) {

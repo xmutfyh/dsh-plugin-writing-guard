@@ -440,7 +440,7 @@ def writing_word_format_tables(file_path, output_path=None):
     from word_guard.table_format import convert_all_tables_to_three_line
 
     doc = Document(file_path)
-    results = convert_all_tables_to_three_line(doc)
+    results = convert_all_tables_to_three_line(doc, selection='auto', bold_header=True)
 
     save_path = output_path or file_path
     doc.save(save_path)
@@ -451,6 +451,34 @@ def writing_word_format_tables(file_path, output_path=None):
         'tables_converted': len(results),
         'details': results,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Tool 6: writing_word_audit_equations
+# ═══════════════════════════════════════════════════════════════════════════
+
+def writing_word_audit_equations(file_path, baseline_path=None):
+    """
+    Audit native OMML equations in a DOCX file.
+
+    Args:
+        file_path: path to the .docx file
+        baseline_path: optional baseline .docx for comparison
+
+    Returns:
+        dict with equation audit results
+    """
+    if not os.path.exists(file_path):
+        return {'error': f"File not found: {file_path}"}
+
+    from docx import Document
+    from word_guard.equation_audit import audit_equations
+
+    doc = Document(file_path)
+    baseline_doc = Document(baseline_path) if baseline_path and os.path.exists(baseline_path) else None
+
+    result = audit_equations(doc, baseline_doc)
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -509,6 +537,13 @@ def main():
         input_file = sys.argv[2]
         output_file = sys.argv[3] if len(sys.argv) > 3 else input_file
         result = writing_word_format_tables(input_file, output_file)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif command == 'audit-equations':
+        if len(sys.argv) < 3:
+            print("Usage: audit-equations <file.docx> [baseline.docx]")
+            sys.exit(1)
+        result = writing_word_audit_equations(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
     else:

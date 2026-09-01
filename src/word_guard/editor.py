@@ -120,13 +120,13 @@ def _split_single_run(para, run_idx, local_start, local_end, new_text, red=True)
         color_elem = existing_rPr.find(qn('w:color'))
         if color_elem is None:
             color_elem = etree.SubElement(existing_rPr, qn('w:color'))
-        color_elem.set(qn('w:val'), 'FF0000' if red else '000000')
+        color_elem.set(qn('w:val'), 'FF0000' if red else (str(original_color) if original_color is not None else '000000'))
 
         # Add after_text as new run if needed
         if after_text:
             after_r = _create_run_with_format(
                 para._element, after_text, rPr,
-                original_color if not red else None
+                original_color
             )
             run._element.addnext(after_r)
         return True
@@ -142,7 +142,7 @@ def _split_single_run(para, run_idx, local_start, local_end, new_text, red=True)
     if after_text:
         after_r = _create_run_with_format(
             para._element, after_text, rPr,
-            original_color if not red else None
+            original_color
         )
         new_r.addnext(after_r)
 
@@ -260,7 +260,7 @@ def replace_text_in_paragraph(para, old_text, new_text, red=True):
     if after_text:
         after_r = _create_run_with_format(
             first_run._element.getparent(), after_text, rPr,
-            original_color if not red else None
+            original_color
         )
         new_r.addnext(after_r)
 
