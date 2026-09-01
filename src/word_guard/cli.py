@@ -30,6 +30,9 @@ from word_guard.editor import (
 from word_guard.protected import check_complex_paragraph, get_protected_elements_in_range
 from word_guard.manifest import ChangeManifest
 from word_guard.integrity import check_scope_integrity
+from word_guard.package_guard import validate_docx_package, compare_package_parts
+from word_guard.fingerprint import build_baseline_fingerprint
+from word_guard.equation_audit import audit_equations
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -118,6 +121,12 @@ def writing_word_edit(file_path, replacements, scope_config=None,
     """
     if not os.path.exists(file_path):
         return {'error': f"File not found: {file_path}"}
+
+    # Preserve a package-level preimage for structural integrity comparison.
+    import tempfile
+    preimage_fd, preimage_path = tempfile.mkstemp(suffix='.docx', prefix='wg_preimage_')
+    os.close(preimage_fd)
+    shutil.copy2(file_path, preimage_path)
 
     # Create backup if needed
     if backup and output_path is None:
@@ -228,8 +237,18 @@ def writing_word_edit(file_path, replacements, scope_config=None,
     doc.save(save_path)
     manifest.finalize()
 
+    package_validation = validate_docx_package(save_path).to_dict()
+    # In text-only mode, only the main document XML and volatile core metadata may change.
+    allowed_parts = {'word/document.xml', 'docProps/core.xml'}
+    package_integrity = compare_package_parts(preimage_path, save_path, allowed_parts)
+    try:
+        os.unlink(preimage_path)
+    except OSError:
+        pass
+
+    success = package_validation['valid'] and (package_integrity['intact'] or mode != 'text_only')
     return {
-        'success': True,
+        'success': success,
         'output': save_path,
         'changes': len([r for r in results if r.get('success')]),
         'total_replacements': len(replacements),
@@ -239,6 +258,8 @@ def writing_word_edit(file_path, replacements, scope_config=None,
             'heading': scope.start_heading,
         },
         'protected_elements': len(protected),
+        'package_validation': package_validation,
+        'package_integrity': package_integrity,
         'manifest_summary': manifest.summary(),
     }
 
@@ -415,70 +436,55 @@ def writing_word_scope_check(file_before, file_after, scope_config=None):
 # Tool 5: writing_word_format_tables
 # ═══════════════════════════════════════════════════════════════════════════
 
-def writing_word_format_tables(file_path, output_path=None):
-    """
-    Convert all tables in a DOCX to three-line format.
+def writing_word_format_tables(file_path, output_path=None, baseline_path=None, include_unknown=False):
+    """Safely convert scholarly data tables to three-line format.
 
-    Three-line table format:
-    - Top border: 1.5pt solid
-    - Header bottom: 0.75pt solid
-    - Bottom border: 1.5pt solid
-    - No vertical lines, no inner horizontal lines
-    - Header row bold
-
-    Args:
-        file_path: path to the source .docx file
-        output_path: output file path (default: overwrite original)
-
-    Returns:
-        dict with conversion results
+    Layout/figure-container tables are skipped.  If a baseline manuscript is
+    supplied, border weights are inherited from it when recognizable.
     """
     if not os.path.exists(file_path):
         return {'error': f"File not found: {file_path}"}
+    if baseline_path and not os.path.exists(baseline_path):
+        return {'error': f"Baseline file not found: {baseline_path}"}
 
     from docx import Document
-    from word_guard.table_format import convert_all_tables_to_three_line
+    from word_guard.table_format import convert_tables_to_three_line
 
     doc = Document(file_path)
-    results = convert_all_tables_to_three_line(doc, selection='auto', bold_header=True)
-
+    results = convert_tables_to_three_line(doc, baseline_path, include_unknown=include_unknown)
     save_path = output_path or file_path
     doc.save(save_path)
+    validation = validate_docx_package(save_path).to_dict()
 
     return {
-        'success': True,
+        'success': validation['valid'],
         'output': save_path,
-        'tables_converted': len(results),
+        'tables_formatted': sum(1 for r in results if r.get('action') == 'formatted'),
+        'tables_skipped': sum(1 for r in results if r.get('action') == 'skipped'),
+        'baseline': baseline_path,
+        'package_validation': validation,
         'details': results,
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Tool 6: writing_word_audit_equations
-# ═══════════════════════════════════════════════════════════════════════════
-
-def writing_word_audit_equations(file_path, baseline_path=None):
-    """
-    Audit native OMML equations in a DOCX file.
-
-    Args:
-        file_path: path to the .docx file
-        baseline_path: optional baseline .docx for comparison
-
-    Returns:
-        dict with equation audit results
-    """
+def writing_word_package_validate(file_path):
     if not os.path.exists(file_path):
         return {'error': f"File not found: {file_path}"}
+    return validate_docx_package(file_path).to_dict()
 
-    from docx import Document
-    from word_guard.equation_audit import audit_equations
 
-    doc = Document(file_path)
-    baseline_doc = Document(baseline_path) if baseline_path and os.path.exists(baseline_path) else None
+def writing_word_fingerprint(file_path):
+    if not os.path.exists(file_path):
+        return {'error': f"File not found: {file_path}"}
+    return build_baseline_fingerprint(file_path).to_dict()
 
-    result = audit_equations(doc, baseline_doc)
-    return result
+
+def writing_word_equation_audit(file_path, baseline_path=None):
+    if not os.path.exists(file_path):
+        return {'error': f"File not found: {file_path}"}
+    if baseline_path and not os.path.exists(baseline_path):
+        return {'error': f"Baseline file not found: {baseline_path}"}
+    return audit_equations(file_path, baseline_path)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -495,7 +501,10 @@ def main():
         print("  audit <file.docx>                         - Writing audit")
         print("  edit <file.docx> <replacements.json>      - Edit document")
         print("  scope-check <before.docx> <after.docx>    - Check scope integrity")
-        print("  format-tables <file.docx> [output.docx]   - Convert tables to three-line format")
+        print("  format-tables <file.docx> [output.docx] [baseline.docx] - Safe three-line tables")
+        print("  package-validate <file.docx>              - Validate OOXML package")
+        print("  fingerprint <file.docx>                   - Baseline formatting fingerprint")
+        print("  equation-audit <file.docx> [baseline.docx]- Audit native equations")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -516,34 +525,58 @@ def main():
 
     elif command == 'edit':
         if len(sys.argv) < 4:
-            print("Usage: edit <file.docx> <replacements.json>")
+            print("Usage: edit <file.docx> <replacements.json> [output.docx] [mode] [scope.json]")
             sys.exit(1)
         with open(sys.argv[3], 'r', encoding='utf-8') as f:
             replacements = json.load(f)
-        result = writing_word_edit(sys.argv[2], replacements)
+        output_file = sys.argv[4] if len(sys.argv) > 4 else None
+        mode = sys.argv[5] if len(sys.argv) > 5 else 'text_only'
+        scope_config = None
+        if len(sys.argv) > 6 and sys.argv[6] not in ('null', ''):
+            raw = json.loads(sys.argv[6])
+            # TypeScript schema uses camelCase; Python scope resolver uses snake_case.
+            keymap = {
+                'startHeading': 'start_heading', 'endHeading': 'end_heading', 'heading': 'heading',
+                'startParagraph': 'start_index', 'endParagraph': 'end_index',
+            }
+            scope_config = {keymap.get(k, k): v for k, v in raw.items()}
+        result = writing_word_edit(sys.argv[2], replacements, scope_config, mode, output_file)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
     elif command == 'scope-check':
         if len(sys.argv) < 4:
-            print("Usage: scope-check <before.docx> <after.docx>")
+            print("Usage: scope-check <before.docx> <after.docx> [scope.json]")
             sys.exit(1)
-        result = writing_word_scope_check(sys.argv[2], sys.argv[3])
+        scope_config = None
+        if len(sys.argv) > 4 and sys.argv[4] not in ('null', ''):
+            raw = json.loads(sys.argv[4])
+            keymap = {'startHeading':'start_heading','endHeading':'end_heading','heading':'heading',
+                      'startParagraph':'start_index','endParagraph':'end_index'}
+            scope_config = {keymap.get(k, k): v for k, v in raw.items()}
+        result = writing_word_scope_check(sys.argv[2], sys.argv[3], scope_config)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
     elif command == 'format-tables':
         if len(sys.argv) < 3:
-            print("Usage: format-tables <file.docx> [output.docx]")
+            print("Usage: format-tables <file.docx> [output.docx] [baseline.docx]")
             sys.exit(1)
         input_file = sys.argv[2]
         output_file = sys.argv[3] if len(sys.argv) > 3 else input_file
-        result = writing_word_format_tables(input_file, output_file)
+        baseline_file = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] not in ('null','') else None
+        result = writing_word_format_tables(input_file, output_file, baseline_file)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    elif command == 'audit-equations':
-        if len(sys.argv) < 3:
-            print("Usage: audit-equations <file.docx> [baseline.docx]")
-            sys.exit(1)
-        result = writing_word_audit_equations(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    elif command == 'package-validate':
+        result = writing_word_package_validate(sys.argv[2])
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif command == 'fingerprint':
+        result = writing_word_fingerprint(sys.argv[2])
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif command == 'equation-audit':
+        baseline_file = sys.argv[3] if len(sys.argv) > 3 else None
+        result = writing_word_equation_audit(sys.argv[2], baseline_file)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
     else:

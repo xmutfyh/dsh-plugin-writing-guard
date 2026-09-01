@@ -120,7 +120,7 @@ def _split_single_run(para, run_idx, local_start, local_end, new_text, red=True)
         color_elem = existing_rPr.find(qn('w:color'))
         if color_elem is None:
             color_elem = etree.SubElement(existing_rPr, qn('w:color'))
-        color_elem.set(qn('w:val'), 'FF0000' if red else (str(original_color) if original_color is not None else '000000'))
+        color_elem.set(qn('w:val'), 'FF0000' if red else '000000')
 
         # Add after_text as new run if needed
         if after_text:
@@ -226,11 +226,17 @@ def replace_text_in_paragraph(para, old_text, new_text, red=True):
     before_text = first_run.text[:start_pos - first_run_start]
     after_text = last_run.text[end_pos - last_run_start:]
 
-    # Get formatting from first affected run
+    # Replacement inherits the first affected run. Unchanged suffix must inherit
+    # the LAST affected run (not the first), otherwise cross-run edits silently
+    # change formatting outside the replacement span.
     rPr = _clone_run_format(first_run._element)
     original_color = (first_run.font.color.rgb
                       if first_run.font.color and first_run.font.color.rgb
                       else None)
+    last_rPr = _clone_run_format(last_run._element)
+    last_color = (last_run.font.color.rgb
+                  if last_run.font.color and last_run.font.color.rgb
+                  else None)
 
     # Modify first run to keep only 'before' part
     for t_elem in first_run._element.findall(qn('w:t')):
@@ -259,8 +265,8 @@ def replace_text_in_paragraph(para, old_text, new_text, red=True):
     # Insert after-text run
     if after_text:
         after_r = _create_run_with_format(
-            first_run._element.getparent(), after_text, rPr,
-            original_color
+            first_run._element.getparent(), after_text, last_rPr,
+            last_color
         )
         new_r.addnext(after_r)
 
@@ -310,7 +316,12 @@ def replace_entire_paragraph(para, new_text, red=True):
     color_elem = existing_rPr.find(qn('w:color'))
     if color_elem is None:
         color_elem = etree.SubElement(existing_rPr, qn('w:color'))
-    color_elem.set(qn('w:val'), 'FF0000' if red else '000000')
+    if red:
+        color_elem.set(qn('w:val'), 'FF0000')
+    else:
+        # Do not invent black; preserve inherited/original formatting.
+        if color_elem.getparent() is not None:
+            color_elem.getparent().remove(color_elem)
 
     result['success'] = True
     return result

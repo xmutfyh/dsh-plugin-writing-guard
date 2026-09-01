@@ -1,269 +1,194 @@
 # -*- coding: utf-8 -*-
-"""
-Safe academic three-line table formatting for DOCX.
+"""Baseline-aware three-line table formatter for scholarly DOCX documents.
 
-Principles
-----------
-1. Never assume every w:tbl is a semantic data table. Word documents often
-   use borderless tables for figures/layout. In ``auto`` mode those tables are
-   skipped conservatively.
-2. Prefer baseline-derived border widths when a reference manuscript is
-   available. Plugin defaults are only a fallback.
-3. Put the three visible rules on cells (header top/header bottom/last-row
-   bottom), not on table-level top/bottom borders. This avoids false bottom
-   rules when a long table is split across pages by Word/LibreOffice.
-4. Do not silently bold headers by default: typography belongs to the
-   manuscript/template unless explicitly requested.
+Safety principles:
+1. Classify tables before formatting.  Layout/figure-container tables are never
+   converted automatically.
+2. Prefer the baseline manuscript's border weights when available.
+3. Put top/header/bottom rules on row cells rather than table-level bottom
+   borders, avoiding false bottom rules at page breaks in long tables.
+4. Do not silently bold headers or otherwise restyle text.
 """
+from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, asdict
+from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 
-@dataclass(frozen=True)
+@dataclass
 class ThreeLineSpec:
-    top_sz: str = "12"       # eighths of a point: 12 = 1.5 pt
-    header_sz: str = "6"     # 6 = 0.75 pt
-    bottom_sz: str = "12"
-    color: str = "auto"
-    source: str = "plugin_default"
+    top_sz: str = '12'       # eighths of a point -> 1.5 pt
+    header_sz: str = '6'     # 0.75 pt
+    bottom_sz: str = '12'    # 1.5 pt
+    color: str = '000000'
+    source: str = 'plugin_default'
 
     def to_dict(self):
-        return {
-            "top_pt": int(self.top_sz) / 8,
-            "header_pt": int(self.header_sz) / 8,
-            "bottom_pt": int(self.bottom_sz) / 8,
-            "color": self.color,
-            "source": self.source,
-        }
+        return asdict(self)
 
 
-def _border_sz(container, edge):
+def _has_drawing(table) -> bool:
+    return table._tbl.find('.//' + qn('w:drawing')) is not None or table._tbl.find('.//' + qn('w:pict')) is not None
+
+
+def _table_text(table) -> str:
+    return '\n'.join(cell.text for row in table.rows for cell in row.cells).strip()
+
+
+def classify_table(table, preceding_text: str = '') -> dict:
+    """Classify a Word table conservatively as data/layout/unknown."""
+    text = _table_text(table)
+    rows, cols = len(table.rows), len(table.columns)
+    prefix = (preceding_text or '').strip().lower()
+
+    if _has_drawing(table):
+        return {'kind': 'layout', 'confidence': 'high', 'reason': 'contains drawing/picture'}
+    if prefix.startswith('table ') or prefix.startswith('table\t') or prefix.startswith('表'):
+        return {'kind': 'data', 'confidence': 'high', 'reason': 'preceded by table caption'}
+    # Typical layout containers are tiny and mostly empty.
+    nonempty = sum(1 for row in table.rows for cell in row.cells if cell.text.strip())
+    total = max(1, rows * cols)
+    if rows <= 2 and cols <= 3 and (not text or nonempty / total < 0.5):
+        return {'kind': 'layout', 'confidence': 'medium', 'reason': 'small sparse layout-like table'}
+    # Conservative data heuristic: at least 2x2 and substantive textual/numeric content.
+    if rows >= 2 and cols >= 2 and len(text) >= 20:
+        return {'kind': 'data', 'confidence': 'medium', 'reason': 'multi-row/column content table'}
+    return {'kind': 'unknown', 'confidence': 'low', 'reason': 'insufficient evidence for safe auto-formatting'}
+
+
+def _preceding_paragraph_text(table):
+    el = table._tbl.getprevious()
+    while el is not None:
+        if el.tag == qn('w:p'):
+            texts = el.findall('.//' + qn('w:t'))
+            return ''.join(t.text or '' for t in texts)
+        el = el.getprevious()
+    return ''
+
+
+def _edge_sz(container, edge):
     if container is None:
         return None
-    el = container.find(qn(f"w:{edge}"))
-    if el is None:
+    el = container.find(qn(f'w:{edge}'))
+    if el is None or el.get(qn('w:val')) in (None, 'none', 'nil'):
         return None
-    val = (el.get(qn("w:val")) or "").lower()
-    if val in ("none", "nil"):
-        return None
-    return el.get(qn("w:sz"))
+    return el.get(qn('w:sz'))
 
 
-def _table_border_sz(table, edge):
-    tbl_pr = table._tbl.tblPr
-    borders = tbl_pr.find(qn("w:tblBorders")) if tbl_pr is not None else None
-    return _border_sz(borders, edge)
-
-
-def _cell_border_sz(cell, edge):
-    tc_pr = cell._tc.tcPr
-    borders = tc_pr.find(qn("w:tcBorders")) if tc_pr is not None else None
-    return _border_sz(borders, edge)
-
-
-def _first_nonempty(values):
-    return next((v for v in values if v is not None), None)
-
-
-def infer_three_line_spec(table, fallback=None):
-    """Infer three-line rule widths from a reference/baseline table."""
-    fallback = fallback or ThreeLineSpec()
+def infer_spec_from_table(table) -> ThreeLineSpec | None:
+    """Infer a three-line border specification from an existing baseline table."""
     if not table.rows:
-        return fallback
+        return None
+    tblBorders = table._tbl.tblPr.find(qn('w:tblBorders'))
+    top = _edge_sz(tblBorders, 'top')
+    bottom = _edge_sz(tblBorders, 'bottom')
 
-    top = _first_nonempty(
-        [_cell_border_sz(c, "top") for c in table.rows[0].cells]
-        + [_table_border_sz(table, "top")]
-    )
-    header = _first_nonempty(
-        [_cell_border_sz(c, "bottom") for c in table.rows[0].cells]
-        + [_table_border_sz(table, "insideH")]
-    )
-    bottom = _first_nonempty(
-        [_cell_border_sz(c, "bottom") for c in table.rows[-1].cells]
-        + [_table_border_sz(table, "bottom")]
-    )
+    # Prefer row-cell borders; this also recognizes the safer split-table form.
+    first = table.rows[0].cells[0]._tc.get_or_add_tcPr().find(qn('w:tcBorders'))
+    last = table.rows[-1].cells[0]._tc.get_or_add_tcPr().find(qn('w:tcBorders'))
+    top = _edge_sz(first, 'top') or top
+    header = _edge_sz(first, 'bottom')
+    bottom = _edge_sz(last, 'bottom') or bottom
 
-    if not any((top, header, bottom)):
-        return fallback
-    return ThreeLineSpec(
-        top_sz=top or fallback.top_sz,
-        header_sz=header or fallback.header_sz,
-        bottom_sz=bottom or fallback.bottom_sz,
-        color=fallback.color,
-        source="baseline",
-    )
+    if top and header and bottom:
+        return ThreeLineSpec(top, header, bottom, '000000', 'baseline')
+    return None
 
 
-def _set_edge(borders, edge, val, sz="0", color="auto"):
-    el = OxmlElement(f"w:{edge}")
-    el.set(qn("w:val"), val)
-    el.set(qn("w:sz"), str(sz))
-    el.set(qn("w:space"), "0")
-    el.set(qn("w:color"), color)
-    borders.append(el)
+def infer_spec_from_baseline(baseline_path: str, table_index: int | None = None) -> ThreeLineSpec | None:
+    doc = Document(baseline_path)
+    if table_index is not None and 0 <= table_index < len(doc.tables):
+        spec = infer_spec_from_table(doc.tables[table_index])
+        if spec:
+            return spec
+    # Fall back to the first confidently data-like table with a recognizable spec.
+    for t in doc.tables:
+        c = classify_table(t, _preceding_paragraph_text(t))
+        if c['kind'] == 'data':
+            spec = infer_spec_from_table(t)
+            if spec:
+                return spec
+    return None
+
+
+def _set_cell_border(cell, edge: str, sz: str, color='000000', val='single'):
+    tcPr = cell._tc.get_or_add_tcPr()
+    tcBorders = tcPr.find(qn('w:tcBorders'))
+    if tcBorders is None:
+        tcBorders = OxmlElement('w:tcBorders')
+        tcPr.append(tcBorders)
+    old = tcBorders.find(qn(f'w:{edge}'))
+    if old is not None:
+        tcBorders.remove(old)
+    el = OxmlElement(f'w:{edge}')
+    el.set(qn('w:val'), val)
+    el.set(qn('w:sz'), sz)
+    el.set(qn('w:space'), '0')
+    el.set(qn('w:color'), color)
+    tcBorders.append(el)
 
 
 def _clear_cell_borders(cell):
-    tc_pr = cell._tc.get_or_add_tcPr()
-    for old in tc_pr.findall(qn("w:tcBorders")):
-        tc_pr.remove(old)
+    tcPr = cell._tc.get_or_add_tcPr()
+    for old in tcPr.findall(qn('w:tcBorders')):
+        tcPr.remove(old)
 
 
-def _add_cell_rules(cell, top=None, bottom=None, color="auto"):
-    if top is None and bottom is None:
-        return
-    tc_pr = cell._tc.get_or_add_tcPr()
-    borders = OxmlElement("w:tcBorders")
-    if top is not None:
-        _set_edge(borders, "top", "single", top, color)
-    if bottom is not None:
-        _set_edge(borders, "bottom", "single", bottom, color)
-    tc_pr.append(borders)
-
-
-def _disable_table_level_borders(table):
-    """Disable all table-level rules; visible rules are cell-level only."""
-    tbl_pr = table._tbl.tblPr
-    for old in tbl_pr.findall(qn("w:tblBorders")):
-        tbl_pr.remove(old)
-    borders = OxmlElement("w:tblBorders")
-    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        _set_edge(borders, edge, "none", "0", "auto")
-    tbl_pr.append(borders)
-
-
-def classify_table(table, preceding_text=""):
-    """
-    Conservatively classify a table as ``data``, ``layout`` or ``unknown``.
-
-    This intentionally favours skipping over destructive formatting.
-    ``force`` mode is available when the caller has already identified the
-    target table semantically.
-    """
-    text = " ".join(
-        p.text.strip()
-        for row in table.rows
-        for cell in row.cells
-        for p in cell.paragraphs
-        if p.text.strip()
-    )
-    drawing_count = len(table._tbl.findall(".//" + qn("w:drawing")))
-    lower_prev = (preceding_text or "").strip().lower()
-    style_name = (getattr(getattr(table, "style", None), "name", "") or "").lower()
-
-    # Figure/layout tables commonly contain drawings and little/no data text.
-    if drawing_count and len(text) < 160:
-        return "layout", "contains drawing(s) with little tabular text"
-    if lower_prev.startswith(("figure ", "fig. ", "fig ")):
-        return "layout", "preceded by a figure caption/label"
-    if "layout" in style_name:
-        return "layout", "table style indicates layout"
-
-    # Strong data-table signals.
-    if lower_prev.startswith("table "):
-        return "data", "preceded by a Table caption/label"
-    if len(table.rows) >= 2 and len(table.columns) >= 2:
-        nonempty = sum(
-            1 for row in table.rows for cell in row.cells if cell.text.strip()
-        )
-        total = max(1, len(table.rows) * len(table.columns))
-        if drawing_count == 0 and nonempty / total >= 0.50:
-            return "data", "dense textual/numeric grid without drawings"
-
-    return "unknown", "no reliable semantic signal"
-
-
-def make_three_line_table(table, spec=None, bold_header=False):
-    """Convert one already-selected semantic table to three-line format."""
+def make_three_line_table(table, spec: ThreeLineSpec | None = None):
     spec = spec or ThreeLineSpec()
     if not table.rows:
-        return {"rows": 0, "cols": 0, "spec": spec.to_dict(), "header_bold_runs": 0}
+        return {'rows': 0, 'cols': 0, 'spec': spec.to_dict()}
 
-    _disable_table_level_borders(table)
+    # Remove table-level rules entirely. Cell-level rules survive pagination more reliably.
+    tblPr = table._tbl.tblPr
+    for old_b in tblPr.findall(qn('w:tblBorders')):
+        tblPr.remove(old_b)
+    borders = OxmlElement('w:tblBorders')
+    for edge_name in ('top','left','bottom','right','insideH','insideV'):
+        el = OxmlElement(f'w:{edge_name}')
+        el.set(qn('w:val'), 'none')
+        el.set(qn('w:sz'), '0')
+        el.set(qn('w:space'), '0')
+        el.set(qn('w:color'), spec.color)
+        borders.append(el)
+    tblPr.append(borders)
+
+    # Clear existing cell borders first, then define exactly three horizontal rules.
     for row in table.rows:
         for cell in row.cells:
             _clear_cell_borders(cell)
 
-    # Explicit cell rules avoid page-break artefacts.
     for cell in table.rows[0].cells:
-        _add_cell_rules(cell, top=spec.top_sz, bottom=spec.header_sz, color=spec.color)
+        _set_cell_border(cell, 'top', spec.top_sz, spec.color)
+        _set_cell_border(cell, 'bottom', spec.header_sz, spec.color)
     for cell in table.rows[-1].cells:
-        # A one-row table needs top/header/bottom on the same cell. Rebuild it.
-        if len(table.rows) == 1:
-            _clear_cell_borders(cell)
-            _add_cell_rules(cell, top=spec.top_sz, bottom=spec.bottom_sz, color=spec.color)
-        else:
-            _add_cell_rules(cell, bottom=spec.bottom_sz, color=spec.color)
-
-    header_bold_count = 0
-    if bold_header:
-        for cell in table.rows[0].cells:
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    if not run.bold:
-                        run.bold = True
-                        header_bold_count += 1
+        _set_cell_border(cell, 'bottom', spec.bottom_sz, spec.color)
 
     return {
-        "rows": len(table.rows),
-        "cols": len(table.columns),
-        "spec": spec.to_dict(),
-        "header_bold_runs": header_bold_count,
+        'rows': len(table.rows),
+        'cols': len(table.columns),
+        'spec': spec.to_dict(),
     }
 
 
-def convert_all_tables_to_three_line(
-    doc, baseline_doc=None, selection="auto", bold_header=False
-):
-    """
-    Format semantic data tables.
-
-    selection:
-      - ``auto``  : classify and skip layout/unknown tables (safe default)
-      - ``all``   : force every table (legacy/explicit behaviour)
-
-    If ``baseline_doc`` is provided, corresponding baseline table border widths
-    are inherited when detectable.
-    """
+def convert_tables_to_three_line(doc, baseline_path: str | None = None, include_unknown: bool = False):
+    """Format only tables classified as data tables; skip layout tables by default."""
     results = []
-    preceding = ""
-    # python-docx table indices are stable for doc.tables; use XML order only
-    # to find a nearby preceding paragraph caption.
-    body_children = list(doc._element.body)
-    table_to_prev = {}
-    prev_text = ""
-    table_i = 0
-    for child in body_children:
-        if child.tag == qn("w:p"):
-            texts = child.findall(".//" + qn("w:t"))
-            candidate = "".join(t.text or "" for t in texts).strip()
-            if candidate:
-                prev_text = candidate
-        elif child.tag == qn("w:tbl"):
-            table_to_prev[table_i] = prev_text
-            table_i += 1
-
     for i, table in enumerate(doc.tables):
-        kind, reason = classify_table(table, table_to_prev.get(i, ""))
-        if selection != "all" and kind != "data":
-            results.append({
-                "index": i, "action": "skipped", "classification": kind,
-                "reason": reason,
-            })
-            continue
-
-        spec = ThreeLineSpec()
-        if baseline_doc is not None and i < len(baseline_doc.tables):
-            spec = infer_three_line_spec(baseline_doc.tables[i], fallback=spec)
-
-        r = make_three_line_table(table, spec=spec, bold_header=bold_header)
-        r.update({
-            "index": i, "action": "formatted",
-            "classification": kind, "reason": reason,
-        })
-        results.append(r)
+        preceding = _preceding_paragraph_text(table)
+        cls = classify_table(table, preceding)
+        item = {'index': i, 'classification': cls, 'action': 'skipped'}
+        if cls['kind'] == 'data' or (include_unknown and cls['kind'] == 'unknown'):
+            spec = infer_spec_from_baseline(baseline_path, i) if baseline_path else None
+            formatted = make_three_line_table(table, spec or ThreeLineSpec())
+            item.update(formatted)
+            item['action'] = 'formatted'
+        results.append(item)
     return results
+
+
+# Backward-compatible alias. Safety behavior is intentionally changed: layout/unknown tables are skipped.
+def convert_all_tables_to_three_line(doc):
+    return convert_tables_to_three_line(doc)

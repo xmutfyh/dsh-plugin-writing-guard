@@ -1,105 +1,91 @@
 # -*- coding: utf-8 -*-
-"""Native Word equation (OMML) audit and baseline comparison."""
+"""Native OMML equation audit with optional baseline comparison."""
+from __future__ import annotations
 
-from copy import deepcopy
+from docx import Document
 from docx.oxml.ns import qn
+from lxml import etree
+import zipfile
 
 
-def _attr(el, name, default=None):
-    return el.get(qn(name), default) if el is not None else default
-
-
-def _style_id(para):
+def _math_font(path):
     try:
-        return para.style.style_id if para.style else None
+        with zipfile.ZipFile(path) as zf:
+            root = etree.fromstring(zf.read('word/settings.xml'))
+            mathPr = root.find('.//' + qn('m:mathPr'))
+            if mathPr is not None:
+                mf = mathPr.find(qn('m:mathFont'))
+                if mf is not None:
+                    return mf.get(qn('m:val'))
     except Exception:
         return None
+    return None
 
 
-def _tabs(para):
-    ppr = para._p.find(qn("w:pPr"))
-    if ppr is None:
+def _tab_stops(p):
+    pPr = p._element.find(qn('w:pPr'))
+    if pPr is None:
         return []
-    tabs = ppr.find(qn("w:tabs"))
+    tabs = pPr.find(qn('w:tabs'))
     if tabs is None:
         return []
-    return [
-        {
-            "val": _attr(t, "w:val"),
-            "pos": _attr(t, "w:pos"),
-        }
-        for t in tabs.findall(qn("w:tab"))
-    ]
+    out = []
+    for tab in tabs.findall(qn('w:tab')):
+        out.append({'val': tab.get(qn('w:val')), 'pos': tab.get(qn('w:pos'))})
+    return out
 
 
-def _math_font(doc):
-    settings = doc.settings._element
-    math_pr = settings.find(qn("m:mathPr"))
-    if math_pr is None:
-        return None
-    math_font = math_pr.find(qn("m:mathFont"))
-    if math_font is None:
-        return None
-    return _attr(math_font, "m:val")
+def _number_text(p):
+    # Equation numbering is often plain text in the same paragraph, e.g. (3).
+    import re
+    m = re.search(r'\(\s*\d+[A-Za-z]?\s*\)\s*$', p.text or '')
+    return m.group(0).strip() if m else None
 
 
-def audit_equations(doc, baseline_doc=None):
-    """
-    Audit native OMML equations and compare their layout to a baseline document.
-
-    This is intentionally read-only. It reports format drift rather than
-    silently normalising mathematical typography.
-    """
+def audit_equations(path: str, baseline_path: str | None = None) -> dict:
+    doc = Document(path)
+    baseline_font = _math_font(baseline_path) if baseline_path else None
+    current_font = _math_font(path)
     equations = []
-    eq_no = 0
-    baseline_math_font = _math_font(baseline_doc) if baseline_doc else None
-    math_font = _math_font(doc)
-
-    baseline_eq_paras = []
-    if baseline_doc:
-        baseline_eq_paras = [
-            p for p in baseline_doc.paragraphs
-            if p._p.find(".//" + qn("m:oMath")) is not None
-        ]
-
-    for p_idx, para in enumerate(doc.paragraphs):
-        maths = para._p.findall(".//" + qn("m:oMath"))
-        if not maths:
+    numbers = []
+    for idx, p in enumerate(doc.paragraphs):
+        has_omath = p._element.find('.//' + qn('m:oMath')) is not None
+        has_para = p._element.find('.//' + qn('m:oMathPara')) is not None
+        if not (has_omath or has_para):
             continue
-        for _ in maths:
-            eq_no += 1
-            entry = {
-                "equation_index": eq_no,
-                "paragraph_index": p_idx,
-                "native_omml": True,
-                "style_id": _style_id(para),
-                "tabs": _tabs(para),
-                "math_font": math_font,
-                "text_preview": para.text[:120],
-                "warnings": [],
-            }
-            if baseline_doc:
-                if math_font != baseline_math_font:
-                    entry["warnings"].append(
-                        f"math font differs from baseline: {math_font!r} vs {baseline_math_font!r}"
-                    )
-                if eq_no <= len(baseline_eq_paras):
-                    bp = baseline_eq_paras[eq_no - 1]
-                    if _style_id(para) != _style_id(bp):
-                        entry["warnings"].append(
-                            f"equation paragraph style differs from baseline: "
-                            f"{_style_id(para)!r} vs {_style_id(bp)!r}"
-                        )
-                    if _tabs(para) != _tabs(bp):
-                        entry["warnings"].append("equation tab stops differ from baseline")
-            equations.append(entry)
+        n = _number_text(p)
+        if n:
+            import re
+            numbers.append(int(re.search(r'\d+', n).group()))
+        equations.append({
+            'paragraph_index': idx,
+            'native_omml': True,
+            'oMathPara': has_para,
+            'style': p.style.style_id if p.style else None,
+            'tabs': _tab_stops(p),
+            'number': n,
+            'text_preview': p.text[:120],
+        })
+
+    continuity = True
+    if numbers:
+        continuity = numbers == list(range(numbers[0], numbers[0] + len(numbers)))
+
+    issues = []
+    if baseline_path and baseline_font and current_font != baseline_font:
+        issues.append(f"Math font differs from baseline: {current_font!r} vs {baseline_font!r}")
+    if numbers and not continuity:
+        issues.append(f"Equation numbering is not continuous: {numbers}")
 
     return {
-        "equation_count": len(equations),
-        "math_font": math_font,
-        "baseline_math_font": baseline_math_font,
-        "equations": equations,
-        "warnings": [
-            w for e in equations for w in e["warnings"]
-        ],
+        'file': path,
+        'equation_count': len(equations),
+        'math_font': current_font,
+        'baseline_math_font': baseline_font,
+        'math_font_matches_baseline': None if not baseline_path else current_font == baseline_font,
+        'numbered_equations': len(numbers),
+        'number_sequence': numbers,
+        'numbering_continuous': continuity,
+        'equations': equations,
+        'issues': issues,
     }

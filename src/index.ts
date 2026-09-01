@@ -820,8 +820,50 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       const baselinePath = args.baselinePath as string | undefined
       if (!filePath) throw new Error('需要提供 filePath')
       const args2 = baselinePath ? [filePath, baselinePath] : [filePath]
-      const result = await callWordGuard('audit-equations', ...args2)
+      const result = await callWordGuard('equation-audit', ...args2)
       return result
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'writing_word_package_validate',
+    description:
+      'DOCX OOXML 包完整性检查（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：解析全部 XML/relationships，' +
+      '检测 malformed XML、broken relationships、缺失关键部件和 orphan media。' +
+      '适合在 Word 编辑保存后执行，验证文档包没有被局部修改破坏。',
+    parameters: {
+      filePath: { type: 'string', description: '要验证的 .docx 文件路径' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const filePath = args.filePath as string
+      if (!filePath) throw new Error('需要提供 filePath')
+      return await callWordGuard('package-validate', filePath)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'writing_word_fingerprint',
+    description:
+      '生成 DOCX 基准格式指纹（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：记录 styles/settings/numbering 哈希、' +
+      'math font、section geometry、公式段落样式与表格边框签名。' +
+      '原则是 baseline manuscript 优先于插件默认格式，可用于后续格式继承与漂移审计。',
+    parameters: {
+      filePath: { type: 'string', description: '基准稿 .docx 文件路径' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const filePath = args.filePath as string
+      if (!filePath) throw new Error('需要提供 filePath')
+      return await callWordGuard('fingerprint', filePath)
     },
   }))
 
