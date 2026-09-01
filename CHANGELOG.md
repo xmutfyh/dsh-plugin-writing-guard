@@ -4,6 +4,59 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2] - 2026-09-01
+
+### Added — DOCUMENT 第五支柱：Word Document Integrity Guard
+
+**核心理念：Change what was requested. Verify what wasn't.**
+
+#### Word Guard 工具
+- **`writing_word_scan`**：DOCX 结构化扫描，返回标题层级、段落信息、表格、复杂对象检测、文档 profile。
+- **`writing_word_edit`**：安全局部编辑，支持 text_only/structural/format_normalization 三种模式。run-aware 编辑保留格式，保护公式/图片/交叉引用/书签。
+- **`writing_word_audit`**：DOCX 写作审计，检测 revision residue、AI 风格、单位格式。
+- **`writing_word_scope_check`**：编辑前后范围完整性验证，指纹检测格式/对象漂移。
+- **`writing_word_format_tables`**：三线表格式化，智能区分数据表 vs 布局表，单元格级边框避免分页问题。
+- **`writing_word_audit_equations`**：OMML 公式审计，检查数学字体、编号连续性、基线对比。
+- **`writing_word_package_validate`**：OOXML 包完整性检查，检测 malformed XML、broken relationships、orphan media。
+- **`writing_word_fingerprint`**：基准格式指纹，记录 styles/settings 哈希、section geometry、表格签名。
+
+#### 三线表智能格式化
+- 表格分类：data/layout/unknown，自动跳过非数据表。
+- 单元格级边框：避免分页时出现假边框。
+- 基线继承：可从参考文档继承边框宽度。
+- 表头加粗：opt-in，默认不修改排版。
+
+#### 基准格式指纹
+- styles/settings/numbering SHA-256 哈希。
+- 数学字体检测。
+- Section geometry（页面尺寸、边距）。
+- 表格边框签名。
+- 公式段落样式。
+
+#### OOXML 包验证
+- 解析全部 XML parts。
+- 检查 relationships 完整性。
+- 检测 orphan media。
+- 自动修复 durableId 和 xml:space。
+
+#### 公式审计增强
+- 编号连续性检查。
+- 基线数学字体对比。
+- 制表位检测。
+
+#### 编辑器改进
+- 标红后文本颜色继承修复（保留原始颜色）。
+- CLI 参数转发修复（output/mode/scope）。
+
+#### Skill
+- 新增 `writing-guard` skill，支持自然语言触发。
+
+### Fixed
+- 修复 after_text 颜色继承问题。
+- 修复 CLI edit 命令的 output/mode/scope 参数转发。
+
+---
+
 ## [1.7.0] - 2026-08-24
 
 ### Added — DELIVERY 第四支柱：Context-to-Artifact Leakage (CAL) 检测

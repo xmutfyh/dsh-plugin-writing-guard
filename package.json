@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "1.8.0",
-  "description": "DeepSeek Harness (DSH) academic writing guard for papers — 论文去AI味 / AI-writing style detection, evidence preservation, journal-fit calibration, manuscript proofreading, writing_audit & automatic checks. Word document safe editing (三线表, scope edit). Local, zero network, zero LLM.",
+  "version": "1.8.2",
+  "description": "Scientific writing & document integrity guard for AI-assisted research — style, evidence, journal fit, delivery, and safe Word editing. Local · Deterministic · Zero LLM.",
   "type": "module",
   "main": "lib/index.js",
   "files": [
@@ -34,25 +34,20 @@
     "node": ">=18"
   },
   "keywords": [
-    "deepseek-harness",
-    "dsh",
-    "dsh-plugin",
-    "host-plugin",
     "academic-writing",
     "scientific-writing",
-    "paper-writing",
-    "paper",
-    "manuscript",
-    "writing-style",
-    "ai-detection",
+    "research-paper",
     "ai-writing",
-    "llm-writing",
-    "defensive-writing",
     "scientific-integrity",
-    "evidence-based-writing",
     "journal-fit",
-    "proofreading",
-    "reviewer"
+    "deepseek-harness",
+    "docx",
+    "microsoft-word",
+    "ooxml",
+    "document-integrity",
+    "document-processing",
+    "manuscript",
+    "proofreading"
   ],
   "license": "MIT",
   "peerDependencies": {
