@@ -1,0 +1,24 @@
+name: writing-guard
+version: 1.8.0
+description: 论文写作纪律检查与 Word 文档安全编辑
+author: Yuanhao Feng
+tags:
+  - writing
+  - audit
+  - docx
+  - word
+  - manuscript
+  - rebuttal
+  - proofreading
+  - ai-detection
+tools:
+  - writing_audit
+  - writing_word_scan
+  - writing_word_edit
+  - writing_word_audit
+  - writing_word_scope_check
+  - writing_word_format_tables
+  - writing_rules
+  - writing_style_profile
+  - writing_journal_profile
+  - writing_delivery_audit

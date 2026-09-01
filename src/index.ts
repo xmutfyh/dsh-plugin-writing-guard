@@ -36,6 +36,9 @@ export const name = 'dsh-plugin-writing-guard'
 
 export const inject = ['tools']
 
+/** 插件目录（用于定位 word_guard Python 模块） */
+const PLUGIN_DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'))
+
 export type Mode = 'conservative' | 'balanced' | 'strict'
 
 /** 预设模式 → 自动审计最低严重度（lint 工具宁可少报也要可信：默认 conservative） */
@@ -202,18 +205,35 @@ function queueSave(
   })
 }
 
-/** 从文件读取文本（.txt/.md/.markdown 直接读；.docx 请先经 anydoc 转 Markdown） */
+/** 从文件读取文本（.txt/.md/.markdown 直接读；.docx 通过 Python word_guard 提取） */
 async function readTextFile(filePath: string): Promise<string> {
   const ext = path.extname(filePath).toLowerCase()
-  if (ext === '.docx' || ext === '.doc' || ext === '.pdf') {
-    throw new Error(`"${filePath}" 是二进制文档，请先调用 anydoc 工具转换为 Markdown，再对转换结果执行 writing_audit`)
+  if (ext === '.docx' || ext === '.doc') {
+    // v1.8：通过 Python word_guard 提取 DOCX 文本（无需 anydoc 中转）
+    try {
+      const { execFile } = await import('node:child_process')
+      const pythonCmd = process.env.DSH_PYTHON ?? 'python3'
+      const wordGuardCli = path.join(PLUGIN_DIR, 'word_guard', 'cli.py')
+      const args = [wordGuardCli, 'audit', filePath]
+      return await new Promise<string>((resolve, reject) => {
+        execFile(pythonCmd, args, { maxBuffer: 10 * 1024 * 1024, timeout: 30_000 }, (err, stdout) => {
+          if (err) reject(new Error(`DOCX text extraction failed: ${err.message}`))
+          else resolve(stdout)
+        })
+      })
+    } catch (e) {
+      throw new Error(`"${filePath}" 是 DOCX 文档，文本提取失败: ${e instanceof Error ? e.message : String(e)}。请先调用 anydoc 工具转换为 Markdown。`)
+    }
+  }
+  if (ext === '.pdf') {
+    throw new Error(`"${filePath}" 是 PDF 文档，请先调用 anydoc 工具转换为 Markdown，再对转换结果执行 writing_audit`)
   }
   return fs.readFile(filePath, 'utf8')
 }
 
 // ---------- 论文文件识别 ----------
 
-const MANUSCRIPT_EXT = new Set(['.md', '.markdown', '.tex', '.txt'])
+const MANUSCRIPT_EXT = new Set(['.md', '.markdown', '.tex', '.txt', '.docx'])
 
 /**
  * 论文特征路径段（相对路径任意层级命中即视为论文文件）。
@@ -297,7 +317,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       'v1.3 篇章统计层：段落节奏（碎片化/拥塞/过度整齐）、句长节奏均匀（局部 run + 作者历史 std 对比）、重复逻辑脚手架（首先其次最后/第一第二第三跨段落复用）、标点脚手架过载（括号/冒号/分号/引号/破折号同句聚集）、自创框架词（XX化/XX力/A-B-C 短线）、空泛判断（多弱信号组合）与本地引用完整性（filePath 同目录存在 .bib 时自动检查 \\cite key ↔ .bib、\\ref ↔ \\label、条目缺字段、DOI 重复）。' +
       'v1.6.2 期刊写作引擎（corpus-aware + epistemic fingerprint + rhetorical moves + semantic hardening）：传 journalProfile=Journal Profile JSON（由 writing_journal_profile 生成）开启 section-level Journal Fit 审计（句法/引用/epistemic/rhetorical move 指标 vs 目标期刊分布，含 Profile Confidence）。' +
       'v1.7.0 DELIVERY 收尾层：检测工作上下文、被否决方案和修改过程无事实依据地泄漏到最终成品（CAL = Context-to-Artifact Leakage）。' +
-      '输入 text 或 filePath（.txt/.md；.docx 请先经 anydoc 转 Markdown）。' +
+      '输入 text 或 filePath（.txt/.md/.docx）。' +
       `（dsh-plugin-writing-guard v${PLUGIN_VERSION}）`,
     parameters: {
       text: { type: 'string', description: '要检查的文本内容（与 filePath 二选一）' },
@@ -581,6 +601,203 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     isConcurrencySafe: () => true,
     async execute() {
       return rulesBrief()
+    },
+  }))
+
+  // ---------- Word 文档安全编辑工具（v1.8） ----------
+
+  /** Python word_guard 模块路径 */
+  const WORD_GUARD_PATH = path.join(PLUGIN_DIR, 'word_guard', 'cli.py')
+
+  /** 调用 Python word_guard 模块的辅助函数 */
+  async function callWordGuard(command: string, ...extraArgs: string[]): Promise<string> {
+    const { execFile } = await import('node:child_process')
+    // 优先级：DSH_PYTHON 环境变量 > python3 > python
+    const pythonCmd = process.env.DSH_PYTHON ?? 'python3'
+    const args = [WORD_GUARD_PATH, command, ...extraArgs]
+    return new Promise((resolve, reject) => {
+      execFile(pythonCmd, args, { maxBuffer: 10 * 1024 * 1024, timeout: 60_000 }, (err, stdout, stderr) => {
+        if (err) reject(new Error(`word_guard ${command} failed: ${err.message}\n${stderr}`))
+        else resolve(stdout)
+      })
+    })
+  }
+
+  ctx.tools.register(defineTool({
+    name: 'writing_word_scan',
+    description:
+      'DOCX 结构化扫描（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：对 Word 文档执行结构化扫描，返回文档 profile、标题层级、段落信息、表格、复杂对象检测。' +
+      '扫描结果可用于定位编辑范围、检测公式/图片/交叉引用等受保护节点、判断文档类型（manuscript/rebuttal）。' +
+      '这是 Word 安全编辑流程的第一步。',
+    parameters: {
+      filePath: { type: 'string', description: '要扫描的 .docx 文件路径' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const filePath = args.filePath as string
+      if (!filePath) throw new Error('需要提供 filePath')
+      const result = await callWordGuard('scan', filePath)
+      return result
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'writing_word_edit',
+    description:
+      'Word 文档安全编辑（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：对 .docx 文件执行局部安全编辑。' +
+      '支持三种模式：text_only（仅替换指定文本）、structural（替换章节/插入公式表格）、format_normalization（全文统一格式，需显式启用）。' +
+      '编辑流程：结构扫描 → 范围解析 → 保护节点检测 → run-aware 文本替换 → 变更清单生成。' +
+      '默认不修改：页边距、页眉页脚、section break、页码、图片、参考文献、交叉引用、书签、脚注。' +
+      '替换文本时保留原始格式（粗体、斜体、字体、颜色），复杂段落（含公式/图片/字段）使用 XML-aware 编辑。',
+    parameters: {
+      filePath: { type: 'string', description: '要编辑的 .docx 文件路径' },
+      replacements: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            old: { type: 'string', description: '要替换的原文' },
+            new: { type: 'string', description: '替换后的新文本' },
+          },
+          additionalProperties: false,
+        },
+        description: '替换列表，每项包含 old 和 new',
+      },
+      scopeConfig: {
+        type: 'object',
+        properties: {
+          startHeading: { type: 'string', description: '起始标题（含）' },
+          endHeading: { type: 'string', description: '结束标题（不含）' },
+          heading: { type: 'string', description: '单节标题' },
+          startParagraph: { type: 'number', description: '起始段落索引' },
+          endParagraph: { type: 'number', description: '结束段落索引' },
+        },
+        additionalProperties: false,
+        description: '编辑范围（可选；不填则全文档）',
+      },
+      mode: {
+        type: 'string',
+        enum: ['text_only', 'structural', 'format_normalization'],
+        description: '编辑模式（默认 text_only）',
+      },
+      outputPath: { type: 'string', description: '输出文件路径（可选；默认覆盖原文件）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      const filePath = args.filePath as string
+      const replacements = args.replacements as Array<{ old: string; new: string }>
+      const scopeConfig = args.scopeConfig as Record<string, unknown> | undefined
+      const mode = (args.mode as string) ?? 'text_only'
+      const outputPath = args.outputPath as string | undefined
+      if (!filePath) throw new Error('需要提供 filePath')
+      if (!replacements || replacements.length === 0) throw new Error('需要提供 replacements')
+
+      // Build scope config JSON for Python
+      const scopeJson = scopeConfig ? JSON.stringify(scopeConfig) : 'null'
+      const replacementsJson = JSON.stringify(replacements)
+
+      // Write replacements to temp file (avoid shell escaping issues)
+      const tmpFile = path.join(os.tmpdir(), `wg_edit_${Date.now()}.json`)
+      await fs.writeFile(tmpFile, replacementsJson, 'utf8')
+
+      const outputArg = outputPath ?? filePath
+      const args2 = [filePath, tmpFile, outputArg, mode]
+      if (scopeConfig) args2.push(scopeJson)
+
+      const result = await callWordGuard('edit', ...args2)
+
+      // Cleanup temp file
+      try { await fs.unlink(tmpFile) } catch { /* ignore */ }
+
+      return result
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'writing_word_audit',
+    description:
+      'Word 文档写作审计（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：对 .docx 文件执行写作纪律检查。' +
+      '自动提取段落文本并检测：修改过程残留（revision residue）、AI 风格词汇、单位格式问题。' +
+      '支持 manuscript/rebuttal 文档类型感知——rebuttal 中 "as requested" 等表述不报警。',
+    parameters: {
+      filePath: { type: 'string', description: '要审计的 .docx 文件路径' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const filePath = args.filePath as string
+      if (!filePath) throw new Error('需要提供 filePath')
+      const result = await callWordGuard('audit', filePath)
+      return result
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'writing_word_scope_check',
+    description:
+      'Word 文档范围完整性检查（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：验证编辑操作是否修改了请求范围之外的内容。' +
+      '对比编辑前后的 DOCX 段落文本，报告任何意外的范围外修改。这是 Word 安全编辑流程的最后一步。',
+    parameters: {
+      fileBefore: { type: 'string', description: '编辑前的 .docx 文件路径' },
+      fileAfter: { type: 'string', description: '编辑后的 .docx 文件路径' },
+      scopeConfig: {
+        type: 'object',
+        properties: {
+          startHeading: { type: 'string', description: '起始标题' },
+          endHeading: { type: 'string', description: '结束标题' },
+        },
+        additionalProperties: false,
+        description: '预期编辑范围',
+      },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const fileBefore = args.fileBefore as string
+      const fileAfter = args.fileAfter as string
+      if (!fileBefore || !fileAfter) throw new Error('需要提供 fileBefore 和 fileAfter')
+      const scopeJson = args.scopeConfig ? JSON.stringify(args.scopeConfig) : 'null'
+      const result = await callWordGuard('scope-check', fileBefore, fileAfter, scopeJson)
+      return result
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'writing_word_format_tables',
+    description:
+      'Word 文档三线表格式化（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：将 .docx 中所有表格转换为学术三线表格式。' +
+      '三线表规则：顶线1.5pt、表头底线0.75pt、底线1.5pt，无竖线、无内部横线，表头加粗。' +
+      '这是学术论文的标准表格格式。',
+    parameters: {
+      filePath: { type: 'string', description: '要格式化的 .docx 文件路径' },
+      outputPath: { type: 'string', description: '输出文件路径（可选；默认覆盖原文件）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      const filePath = args.filePath as string
+      const outputPath = args.outputPath as string | undefined
+      if (!filePath) throw new Error('需要提供 filePath')
+      const args2 = outputPath ? [filePath, outputPath] : [filePath]
+      const result = await callWordGuard('format-tables', ...args2)
+      return result
     },
   }))
 

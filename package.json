@@ -1,17 +1,20 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "1.7.0",
-  "description": "DeepSeek Harness (DSH) academic writing guard for papers — 论文去AI味 / AI-writing style detection, evidence preservation, journal-fit calibration, manuscript proofreading, writing_audit & automatic checks. Local, zero network, zero LLM.",
+  "version": "1.8.0",
+  "description": "DeepSeek Harness (DSH) academic writing guard for papers — 论文去AI味 / AI-writing style detection, evidence preservation, journal-fit calibration, manuscript proofreading, writing_audit & automatic checks. Word document safe editing (三线表, scope edit). Local, zero network, zero LLM.",
   "type": "module",
   "main": "lib/index.js",
   "files": [
     "lib",
+    "src/word_guard",
+    "skills",
     "cordis.patch.yml"
   ],
   "scripts": {
     "build": "tsc",
     "pretest": "npm run build",
-    "test": "node tests/run-tests.mjs"
+    "test": "node tests/run-tests.mjs",
+    "postinstall": "node scripts/install-extras.mjs"
   },
   "dsh": {
     "bundle": {
