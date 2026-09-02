@@ -612,15 +612,29 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   /** 调用 Python word_guard 模块的辅助函数 */
   async function callWordGuard(command: string, ...extraArgs: string[]): Promise<string> {
     const { execFile } = await import('node:child_process')
-    // 优先级：DSH_PYTHON 环境变量 > python3 > python
-    const pythonCmd = process.env.DSH_PYTHON ?? 'python3'
+    // 优先级：DSH_PYTHON > python3 > python（Windows 常只有 python）
+    const candidates = process.env.DSH_PYTHON
+      ? [process.env.DSH_PYTHON]
+      : process.platform === 'win32'
+        ? ['python', 'python3']
+        : ['python3', 'python']
     const args = [WORD_GUARD_PATH, command, ...extraArgs]
-    return new Promise((resolve, reject) => {
-      execFile(pythonCmd, args, { maxBuffer: 10 * 1024 * 1024, timeout: 60_000 }, (err, stdout, stderr) => {
-        if (err) reject(new Error(`word_guard ${command} failed: ${err.message}\n${stderr}`))
-        else resolve(stdout)
-      })
-    })
+    // Try each candidate until one works
+    for (const pythonCmd of candidates) {
+      try {
+        const result = await new Promise<string>((resolve, reject) => {
+          execFile(pythonCmd, args, { maxBuffer: 10 * 1024 * 1024, timeout: 60_000 }, (err, stdout, stderr) => {
+            if (err) reject(new Error(`word_guard ${command} failed: ${err.message}\n${stderr}`))
+            else resolve(stdout)
+          })
+        })
+        return result
+      } catch (e) {
+        if (pythonCmd === candidates[candidates.length - 1]) throw e
+        // Try next candidate
+      }
+    }
+    throw new Error('No Python interpreter found')
   }
 
   ctx.tools.register(defineTool({

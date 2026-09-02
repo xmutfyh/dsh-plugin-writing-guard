@@ -67,12 +67,27 @@ try {
   // 3. Check python-docx availability (informational only)
   try {
     const { execSync } = await import('node:child_process')
-    const pythonCmd = process.env.DSH_PYTHON || 'python3'
-    execSync(`${pythonCmd} -c "import docx; print(docx.__version__)"`, { stdio: 'pipe' })
-    console.log('[dsh-plugin-writing-guard] python-docx detected ✓')
+    // Try DSH_PYTHON, then python3, then python (Windows often only has python)
+    const candidates = process.env.DSH_PYTHON
+      ? [process.env.DSH_PYTHON]
+      : process.platform === 'win32'
+        ? ['python', 'python3']
+        : ['python3', 'python']
+    let found = false
+    for (const cmd of candidates) {
+      try {
+        execSync(`${cmd} -c "import docx; print(docx.__version__)"`, { stdio: 'pipe' })
+        console.log(`[dsh-plugin-writing-guard] python-docx detected via ${cmd} ✓`)
+        found = true
+        break
+      } catch {}
+    }
+    if (!found) {
+      console.warn('[dsh-plugin-writing-guard] python-docx not found — Word tools will not work until installed:')
+      console.warn('  pip install python-docx')
+    }
   } catch {
-    console.warn('[dsh-plugin-writing-guard] python-docx not found — Word tools will not work until installed:')
-    console.warn('  pip install python-docx')
+    // child_process import failed — ignore
   }
 
   console.log('[dsh-plugin-writing-guard] Postinstall complete')

@@ -8,6 +8,7 @@
     "lib",
     "src/word_guard",
     "skills",
+    "scripts",
     "cordis.patch.yml"
   ],
   "scripts": {
