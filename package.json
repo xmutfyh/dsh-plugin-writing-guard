@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-writing-guard",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Scientific writing & document integrity guard for AI-assisted research - prompt-guided argument economy with deterministic scientific, delivery, journal, and Word integrity checks.",
   "type": "module",
   "main": "lib/index.js",

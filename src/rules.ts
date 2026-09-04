@@ -50,7 +50,7 @@ export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 export type EditAction = 'KEEP' | 'CUT' | 'TIGHTEN' | 'REFRAME_TO_FACT' | 'RELOCATE' | 'QUERY'
 
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '2.0.0'
+export const PLUGIN_VERSION = '2.0.1'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）

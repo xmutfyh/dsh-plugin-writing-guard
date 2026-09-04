@@ -4,6 +4,17 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-09-04
+
+### Changed — v2.0 cleanup
+
+- Replace `rulesBrief()` with v2.0 Manuscript Policy (Source authority / Argument economy / Do not close every semantic loop / Clarity is not exhaustiveness / Editing order / Scientific integrity / Deterministic checks).
+- Remove old 发布会原则 section (优势必须明确说出来 / 打不过的维度 / 不主动示弱).
+- Copy v2.0 `SKILL.md` (root + `skills/`) with Manuscript Writing Policy.
+- Update `manifest.yaml` version to 2.0.1.
+- Update README/README.en test counts to 394.
+- All 394 tests passing.
+
 ## [2.0.0] - 2026-09-03
 
 ### Changed - Prompt-first scientific prose discipline
