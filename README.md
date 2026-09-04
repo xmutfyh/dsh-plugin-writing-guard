@@ -19,7 +19,7 @@ It protects your manuscript across five layers:
 | **DELIVERY** | Context leakage | prompt、notes、workflow metadata 泄漏 |
 | **DOCUMENT** 🆕 | Document corruption | Word 格式、公式、表格、OOXML 被破坏 |
 
-**Prompt-guided writing · Deterministic integrity core · 390 Tests**
+**Prompt-guided writing · Deterministic integrity core · 394 Tests**
 
 ```
 npm install dsh-plugin-writing-guard
@@ -257,7 +257,7 @@ The LLM/agent decides *what* should change. Deterministic Word code decides *how
 npm test
 ```
 
-390 deterministic tests covering:
+394 deterministic tests covering:
 - STYLE, Scholarship Lock, Epistemic Lock
 - Claim alignment, local citation integrity
 - Journal Profile, Journal Fit

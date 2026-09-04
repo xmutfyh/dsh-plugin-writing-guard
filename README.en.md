@@ -211,7 +211,7 @@ Repository: https://github.com/xmutfyh/dsh-plugin-writing-guard
 npm test
 ```
 
-390 deterministic TP / TN / boundary / regression tests covering:
+394 deterministic TP / TN / boundary / regression tests covering:
 
 - STYLE, Scholarship Lock, Epistemic Lock
 - Claim alignment, local citation integrity

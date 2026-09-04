@@ -1,12 +1,12 @@
 ---
 name: writing-guard
 description: >-
-  Academic-writing discipline guard (deterministic, zero-network): rewrite/refactor manuscript
+  Academic-writing discipline guard for prompt-guided scientific prose and deterministic integrity checks: rewrite/refactor manuscript
   prose to remove AI mechanical phrasing and defensive disclaimers while protecting research facts
   and epistemic integrity (numbers, citations, claim strength, negation, scope must not be silently
   changed by language polishing). Detects context-to-artifact leakage: rejected alternatives,
   revision history, or working-context residue that leaks into final deliverables (CAL detection).
-  论文写作纪律守则（本地规则，零网络）：去 AI 机械感（多重"的"字链、套路过渡词、空洞热词、超长句）、
+  论文写作纪律守则（prompt-guided editing + deterministic integrity checks）：去 AI 机械感（多重"的"字链、套路过渡词、空洞热词、超长句）、
   清除自黑式免责套话（"基于假数据/模型毫无意义"）、保护科研事实与科学主张完整性
   （数字/引用/主张强度/否定/scope 不许被语言修改悄悄改变——Scholarship Lock + Epistemic Lock）、
   检测工作上下文、被否决方案和修改过程无事实依据地泄漏到最终成品（CAL = Context-to-Artifact Leakage）。
@@ -16,9 +16,73 @@ description: >-
 
 # 论文写作纪律守则（writing-guard）
 
-本技能是 `dsh-plugin-writing-guard`（DSH 插件，v1.7.0）的独立静态版——规则集与插件一致，
+## Manuscript Writing Policy (v2.0)
+
+### Control context is not manuscript content
+
+- **Critique is not content.** Reviewer comments, user editing instructions, guard findings, rejected alternatives, and remediation suggestions are control context, not manuscript evidence.
+- Never quote, paraphrase, or convert control-context wording into manuscript prose unless authoritative research material independently supports the resulting statement.
+- If a concern maps to a real method fact, state the fact only. Example: prefer `Normalization parameters were estimated from the training data.` over `To prevent data leakage, ...`.
+- If the source material does not establish the needed fact, do not invent a mitigation. Leave the manuscript unchanged or query the author.
+
+### Argument economy
+
+Every sentence must earn its place by adding at least one of: evidence, method, result, comparison, non-obvious interpretation, a necessary scope/evidence boundary, or a logical relation required by the argument.
+
+If deleting a sentence preserves the scientific content and argument, **CUT it**. Prefer CUT over REWRITE. Do not turn a useless sentence into a more polished useless sentence.
+
+Delete prose whose only function is to:
+
+- pre-empt reviewer criticism;
+- reassure the reader that a risk was considered;
+- defend the authors or the method;
+- advertise that a finding is important;
+- narrate the writing/revision process;
+- restate an already explicit claim;
+- explain an implication that the intended specialist reader can infer directly.
+
+### Do not close every semantic loop
+
+State each scientific claim once. After evidence and the necessary calibrated interpretation are present, stop. Assume a specialist reader can make one obvious inferential step unaided.
+
+Treat `In other words`, `This means that`, `Taken together`, and equivalent Chinese summary markers as **candidates**, not banned phrases. Keep them only when the next sentence adds a mechanism, comparison, quantitative interpretation, condition, citation, or necessary boundary.
+
+Standalone evaluations such as `This is an important finding.` should be cut unless they immediately specify a concrete consequence.
+
+### Clarity is not exhaustive explanation
+
+Clarity means explicit referents, readable syntax, sufficient reproducibility detail, and the reasoning needed to interpret the evidence. It does **not** mean spelling out every implication.
+
+Do not remove definitions, non-obvious statistical interpretation, necessary method detail, or genuine epistemic boundaries merely to be terse. A sentence that translates a difficult metric into useful meaning may stay; a sentence that only paraphrases an already explicit claim should go.
+
+### Defensive-purpose test
+
+Treat reviewer-facing prebuttals, repeated non-claim disclaimers, omitted-experiment defenses, result excuses, legalistic reassurance, and automatic "therefore this is important" summaries as candidates for removal or relocation.
+
+For any such sentence, ask in order:
+
+1. Does it change a scientifically necessary understanding of method, validity, scope, evidence strength, or interpretation? If **no**, CUT.
+2. Is the underlying fact independently supported by the authoritative research material? If **yes**, state that fact directly and minimally; if **no**, QUERY rather than inventing it.
+3. Is the content a real limitation or alternative explanation? If **yes**, keep the scientific content in the appropriate section, but remove the reviewer-facing motive and repeated reassurance.
+
+### Style-only expansion discipline
+
+When the user asks only for polishing, rewriting, or style improvement and supplies no new scientific content, default to the **same length or shorter**. Expansion is justified only when needed to resolve real ambiguity, preserve reproducibility, or state a necessary scientific boundary. Do not add explanation simply to make the prose feel more complete.
+
+### Minimal edit protocol
+
+Use **CUT -> PRUNE -> RECAST -> SPLIT**. Do not automatically turn one difficult sentence into two or three explanatory sentences. Split only when the original genuinely contains multiple independent scientific claims.
+
+For defensive prose, **write the scientific fact, not the reason you are defensively mentioning the fact**.
+
+### Scientific invariants
+
+Never silently alter numbers, units, statistics, citations, Figure/Table references, negation, null findings, causal strength, evidential strength, evidence status, population, condition, or scope for style. If a better sentence requires unsupported science, **QUERY**.
+
+
+本技能是 `dsh-plugin-writing-guard`（DSH 插件，v2.0.0）的独立静态版——规则集与插件一致，
 供没有 DSH 的环境（Codex / Claude Code / Antigravity / 任意 agent）在写作与润色时执行。
-所有规则均为确定性正则/统计，零网络零 LLM；源插件还提供 `writing_audit`（扫描）、
+文风决策由宿主模型按本守则执行；确定性代码继续负责可稳定验证的统计与科研完整性检查。源插件还提供 `writing_audit`（扫描）、
 `writing_rules`（速查）、`writing_style_profile`（作者风格档案）、`writing_journal_profile`
 （目标期刊写作档案）、`writing_delivery_audit`（CAL 检测）工具与 Scholarship Lock 实体对比。
 
@@ -158,10 +222,11 @@ description: >-
   Journal Style——期刊风格永远不能覆盖科学完整性；原文只支持 "associated with" 时，
   任何 Journal Profile 都不能推动改成 "caused"。
 
-## 8. 发布原则与提交前自查
+## 8. 论证经济性与提交前自查
 
-- 只围绕优势组织论文；不写工作汇报、不主动示弱、不替审稿人攻击自己；
-  打不过的维度不设为比赛项目；优势必须明确说出来。
+- 不赞美工作，不贬低工作，也不为工作辩护。正文只保留证据、必要解释和必要边界。
+- 如果一句话只是为了防止被质疑、安抚审稿人、强调“很重要”，或把专业读者已经能推出的意思再讲一遍，优先 CUT。
+- 修改意见、审稿意见、Guard finding 与 remediation wording 都属于 control context，不是正文素材。
 - 润色/改写后自查：① 数字、百分数、p 值、置信区间、\cite/\ref、Figure/Table 编号、DOI
   是否被改动（语言润色不得改变科研事实——Scholarship Lock）；② 主张强度是否沿阶梯漂移、
   否定/零结果是否被翻转、scope 边界是否消失（Epistemic Lock）；③ 高危项清零、中危 ≤3 处；
@@ -193,5 +258,5 @@ description: >-
 
 ---
 
-*本守则来源于 dsh-plugin-writing-guard v1.7.0（MIT）。检测类规则为概率信号：命中即人工复核，
+*本守则来源于 dsh-plugin-writing-guard v2.0.0（MIT）。检测类规则为概率信号：命中即人工复核，
 专业术语与正当 limitations 不因规则报警而删改。*

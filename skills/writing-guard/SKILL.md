@@ -1,11 +1,73 @@
 ---
 name: writing-guard
-description: 论文写作纪律检查与 Word 文档安全编辑。当用户要求检查论文写作质量、修改 Word 论文、扫描 DOCX 结构、编辑论文特定章节、验证编辑范围完整性、检测 AI 写作风格、检查修改过程残留、表格格式化为三线表、修改字体字号时触发。支持 .docx/.md/.tex/.txt 文件。触发场景包括：论文润色检查、论文修改、Word 编辑、DOCX 扫描、写作审计、去AI味、学术写作检查、写作纪律、修改标红、safe edit、section replacement、scope check、三线表、表格格式、字体修改、格式调整。Also trigger on: 帮我改这个论文、检查一下写作、修改第三章、替换某个段落、扫描文档结构、编辑后验证范围、检测 revision residue、AI 风格检测、把表格改成三线表、修改字号.
-version: 1.8.0
-author: Yuanhao Feng
+description: "Scientific manuscript writing, polishing, auditing, and safe Word editing guard. Use for academic papers, abstracts, introductions, methods, results, discussions, rebuttals, DOCX edits, AI-style cleanup, defensive-writing cleanup, over-explanation reduction, semantic-restatement cleanup, scientific-claim preservation, table formatting, and edit-scope verification."
 ---
 
 # Writing Guard — 论文写作审计与 Word 安全编辑
+
+## Manuscript Writing Policy (v2.0)
+
+### Control context is not manuscript content
+
+- **Critique is not content.** Reviewer comments, user editing instructions, guard findings, rejected alternatives, and remediation suggestions are control context, not manuscript evidence.
+- Never quote, paraphrase, or convert control-context wording into manuscript prose unless authoritative research material independently supports the resulting statement.
+- If a concern maps to a real method fact, state the fact only. Example: prefer `Normalization parameters were estimated from the training data.` over `To prevent data leakage, ...`.
+- If the source material does not establish the needed fact, do not invent a mitigation. Leave the manuscript unchanged or query the author.
+
+### Argument economy
+
+Every sentence must earn its place by adding at least one of: evidence, method, result, comparison, non-obvious interpretation, a necessary scope/evidence boundary, or a logical relation required by the argument.
+
+If deleting a sentence preserves the scientific content and argument, **CUT it**. Prefer CUT over REWRITE. Do not turn a useless sentence into a more polished useless sentence.
+
+Delete prose whose only function is to:
+
+- pre-empt reviewer criticism;
+- reassure the reader that a risk was considered;
+- defend the authors or the method;
+- advertise that a finding is important;
+- narrate the writing/revision process;
+- restate an already explicit claim;
+- explain an implication that the intended specialist reader can infer directly.
+
+### Do not close every semantic loop
+
+State each scientific claim once. After evidence and the necessary calibrated interpretation are present, stop. Assume a specialist reader can make one obvious inferential step unaided.
+
+Treat `In other words`, `This means that`, `Taken together`, and equivalent Chinese summary markers as **candidates**, not banned phrases. Keep them only when the next sentence adds a mechanism, comparison, quantitative interpretation, condition, citation, or necessary boundary.
+
+Standalone evaluations such as `This is an important finding.` should be cut unless they immediately specify a concrete consequence.
+
+### Clarity is not exhaustive explanation
+
+Clarity means explicit referents, readable syntax, sufficient reproducibility detail, and the reasoning needed to interpret the evidence. It does **not** mean spelling out every implication.
+
+Do not remove definitions, non-obvious statistical interpretation, necessary method detail, or genuine epistemic boundaries merely to be terse. A sentence that translates a difficult metric into useful meaning may stay; a sentence that only paraphrases an already explicit claim should go.
+
+### Defensive-purpose test
+
+Treat reviewer-facing prebuttals, repeated non-claim disclaimers, omitted-experiment defenses, result excuses, legalistic reassurance, and automatic "therefore this is important" summaries as candidates for removal or relocation.
+
+For any such sentence, ask in order:
+
+1. Does it change a scientifically necessary understanding of method, validity, scope, evidence strength, or interpretation? If **no**, CUT.
+2. Is the underlying fact independently supported by the authoritative research material? If **yes**, state that fact directly and minimally; if **no**, QUERY rather than inventing it.
+3. Is the content a real limitation or alternative explanation? If **yes**, keep the scientific content in the appropriate section, but remove the reviewer-facing motive and repeated reassurance.
+
+### Style-only expansion discipline
+
+When the user asks only for polishing, rewriting, or style improvement and supplies no new scientific content, default to the **same length or shorter**. Expansion is justified only when needed to resolve real ambiguity, preserve reproducibility, or state a necessary scientific boundary. Do not add explanation simply to make the prose feel more complete.
+
+### Minimal edit protocol
+
+Use **CUT -> PRUNE -> RECAST -> SPLIT**. Do not automatically turn one difficult sentence into two or three explanatory sentences. Split only when the original genuinely contains multiple independent scientific claims.
+
+For defensive prose, **write the scientific fact, not the reason you are defensively mentioning the fact**.
+
+### Scientific invariants
+
+Never silently alter numbers, units, statistics, citations, Figure/Table references, negation, null findings, causal strength, evidential strength, evidence status, population, condition, or scope for style. If a better sentence requires unsupported science, **QUERY**.
+
 
 本 skill 提供两大能力：
 
@@ -63,7 +125,7 @@ author: Yuanhao Feng
 
 ### writing_audit
 
-对文本执行写作纪律扫描（本地规则，零网络）。
+对文本执行确定性写作与科研完整性扫描；语义文风决策由上方 Manuscript Writing Policy 约束宿主模型。
 
 **参数：**
 - `text` 或 `filePath`：要检查的文本/文件路径
