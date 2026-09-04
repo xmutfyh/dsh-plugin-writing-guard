@@ -15,12 +15,12 @@
  *
  * Rule sources (see 09_wiki/writing/写作纪律_防AI痕迹与防御性写作.md):
  *  - Reviewer-shared AI-writing-tell list (OCR of two JPGs)
- *  - 扬长避短提示词 (no self-deprecation, no reviewer bait)
+ *  - Argument economy (no reviewer bait, no defensive motive, no semantic over-closure)
  *  - ESR guide (no revision-process residue, boundaries stated once)
  *  - Kobak et al., Science Advances (2025; >15M biomedical abstracts) for
  *    LLM-associated vocabulary spikes; community word lists.
  *
- * All rules are local regex/statistics — zero network, zero LLM calls.
+ * Deterministic rules remain local; semantic writing decisions are delegated to the host model through rulesBrief()/SKILL.md.
  */
 
 export type Category =
@@ -46,8 +46,11 @@ export type Confidence = 'high' | 'medium' | 'low'
  */
 export type FindingKind = 'invariant' | 'violation' | 'candidate' | 'advisory'
 
+/** v2.0 remediation semantics: style findings should prefer deletion/minimal edits over prose generation. */
+export type EditAction = 'KEEP' | 'CUT' | 'TIGHTEN' | 'REFRAME_TO_FACT' | 'RELOCATE' | 'QUERY'
+
 /** 插件版本（单点定义：state 标记、工具描述、规则速查共用，避免多处硬编码漂移） */
-export const PLUGIN_VERSION = '1.7.0'
+export const PLUGIN_VERSION = '2.0.0'
 
 export type DocumentProfile =
   | 'manuscript'    // 论文正文（含摘要/引言/方法/结果/讨论）
@@ -1879,6 +1882,17 @@ export function resolveFindingKind(rule: Pick<Rule, 'findingKind' | 'severity' |
   return rule.category === 'claim_calibration' ? 'candidate' : 'advisory'
 }
 
+export function resolveEditAction(
+  hit: Pick<Hit, 'findingKind' | 'severity' | 'category'>,
+  rule?: Pick<Rule, 'defaultAction'>,
+): EditAction {
+  if (rule?.defaultAction) return rule.defaultAction
+  if (hit.findingKind === 'invariant') return 'QUERY'
+  if (hit.findingKind === 'violation') return 'CUT'
+  if (hit.findingKind === 'candidate') return 'TIGHTEN'
+  return 'KEEP'
+}
+
 /** v0.8 科学完整性回归摘要（仅 original 对比时生成） */
 export interface IntegritySummary {
   /** 数字/统计量/百分数/p 值/CI 变化数 */
@@ -1948,6 +1962,8 @@ export interface Rule {
    * 需要偏离默认语义的规则显式声明（如 invariant 类规则在代码中直接标注）。
    */
   findingKind?: FindingKind
+  /** v2.0: default remediation action; semantic prompt decides final disposition. */
+  defaultAction?: EditAction
   // ---------- v1.3 篇章统计层（局部规则 → 篇章统计 → 科学完整性）----------
   /** v1.3：段落节奏规则（碎片化/拥塞/过度整齐；aggregate 统计，不走 regex 扫描） */
   paragraphRhythm?: boolean
@@ -1981,6 +1997,8 @@ export interface Hit {
   /** v0.8：命中性质（invariant/violation/candidate/advisory）——"危险等级"与"问题性质"解耦；
    *  报告生成前统一补齐（缺省按 severity/category 推导） */
   findingKind?: FindingKind
+  /** v2.0: minimal remediation action for the agent. */
+  action?: EditAction
   /** v0.3.1：证据来源传播到报告（confidence+evidence 要落地到 UX） */
   evidence?: Evidence
   /** 密度信息（全文统计级规则） */
@@ -2125,6 +2143,107 @@ const RULES: Rule[] = [
   },
 
   // ================= claim_calibration 主张校准（防御性写作） =================
+  {
+    id: 'defensive-purpose-en',
+    category: 'claim_calibration',
+    severity: 'high',
+    confidence: 'medium',
+    label: 'Defensive-purpose framing',
+    pattern: /\b(?:to|in order to)\s+(?:avoid|prevent|preclude|address|allay|minimi[sz]e)\s+(?:potential\s+)?(?:concerns?|criticism|misunderstandings?|confusion|questions?|doubts?|objections?|data leakage|information leakage)\b/gi,
+    message: 'The sentence foregrounds why the author is defending against a possible objection rather than the scientific fact itself.',
+    suggestion: 'Remove the defensive motive. If the source material independently supports a relevant method or scope fact, state only that fact. Otherwise CUT or QUERY; do not invent a mitigation.',
+    maxHits: 4,
+    profiles: ['manuscript', 'unknown'],
+    languages: ['en'],
+    evidence: { type: 'style-guide', source: 'Argument economy; reviewer-facing prebuttal taxonomy' },
+    findingKind: 'candidate',
+    defaultAction: 'REFRAME_TO_FACT',
+    note: 'Critique is not content. A concern raised in revision is control context, not manuscript evidence.',
+  },
+  {
+    id: 'defensive-purpose-zh',
+    category: 'claim_calibration',
+    severity: 'high',
+    confidence: 'medium',
+    label: 'Defensive-purpose framing (ZH)',
+    pattern: /(?:为了?|以)(?:避免|防止|消除|回应|打消)(?:潜在)?(?:质疑|误解|忧虑|担忧|争议|数据泄漏|信息泄漏)/g,
+    message: 'The sentence foregrounds a defensive motive instead of the scientific fact.',
+    suggestion: 'Remove the defensive motive and retain only an independently supported method/scope fact. If no such fact exists in the source material, CUT or QUERY rather than inventing one.',
+    maxHits: 4,
+    profiles: ['manuscript', 'unknown'],
+    languages: ['zh'],
+    evidence: { type: 'style-guide', source: 'Argument economy; reviewer-facing prebuttal taxonomy' },
+    findingKind: 'candidate',
+    defaultAction: 'REFRAME_TO_FACT',
+    note: 'Control-context concerns must not be converted into manuscript prose.',
+  },
+  {
+    id: 'semantic-closure-marker-en',
+    category: 'academic_style',
+    severity: 'low',
+    confidence: 'low',
+    label: 'Possible semantic-closure sentence',
+    pattern: /\b(?:in other words|put differently|to put it another way|simply put|this means that|taken together|these findings (?:highlight|underscore)|this finding (?:highlights|underscores))\b/gi,
+    message: 'This marker often introduces a second sentence that repackages an already explicit claim.',
+    suggestion: 'Check information gain. If the sentence adds no mechanism, comparison, quantitative interpretation, condition, citation, or necessary boundary, CUT it. A specialist reader can make one obvious inference unaided.',
+    maxHits: 5,
+    profiles: ['manuscript', 'unknown'],
+    languages: ['en'],
+    evidence: { type: 'style-guide', source: 'Paraphrastic repetition / argument economy' },
+    findingKind: 'candidate',
+    defaultAction: 'TIGHTEN',
+    note: 'Not a banned-phrase rule: genuine technical or quantitative clarification may be useful.',
+  },
+  {
+    id: 'semantic-closure-marker-zh',
+    category: 'academic_style',
+    severity: 'low',
+    confidence: 'low',
+    label: 'Possible semantic-closure sentence (ZH)',
+    pattern: /(?:换言之|也就是说|换句话说|这意味着|由此可见|这进一步说明|综上)/g,
+    message: 'This marker often introduces an unnecessary restatement or paragraph-closing explanation.',
+    suggestion: 'Check information gain. If no new mechanism, comparison, quantitative interpretation, condition, citation, or necessary boundary is added, CUT it.',
+    maxHits: 5,
+    profiles: ['manuscript', 'unknown'],
+    languages: ['zh'],
+    evidence: { type: 'style-guide', source: 'Paraphrastic repetition / argument economy' },
+    findingKind: 'candidate',
+    defaultAction: 'TIGHTEN',
+    note: 'Not a banned-phrase rule; retain real clarification.',
+  },
+  {
+    id: 'content-free-evaluation-en',
+    category: 'academic_style',
+    severity: 'low',
+    confidence: 'medium',
+    label: 'Content-free evaluation',
+    pattern: /\b(?:(?:this|the) (?:finding|result|observation) (?:is (?:important|significant|noteworthy|meaningful|clinically relevant)|has important implications)|these (?:findings|results|observations) (?:are (?:important|significant|noteworthy|meaningful|clinically relevant)|have important implications)|this is an? (?:important|significant|noteworthy|meaningful|clinically relevant) (?:finding|result|observation)|these are (?:important|significant|noteworthy|meaningful|clinically relevant) (?:findings|results|observations))\b/gi,
+    message: 'The sentence labels a result as important or meaningful without itself adding scientific information.',
+    suggestion: 'CUT the standalone evaluation. Keep an implication only when it names a concrete mechanism, consequence, comparison, decision, or boundary.',
+    maxHits: 4,
+    profiles: ['manuscript', 'unknown'],
+    languages: ['en'],
+    evidence: { type: 'style-guide', source: 'Argument economy / content-free evaluation' },
+    findingKind: 'advisory',
+    defaultAction: 'CUT',
+  },
+  {
+    id: 'content-free-evaluation-zh',
+    category: 'academic_style',
+    severity: 'low',
+    confidence: 'medium',
+    label: 'Content-free evaluation (ZH)',
+    pattern: /(?:这|该)(?:一)?(?:发现|结果|观察)(?:具有|有)(?:重要|显著|值得注意|重大)(?:意义|价值|启示)/g,
+    message: 'The sentence evaluates importance without adding a concrete scientific consequence.',
+    suggestion: 'CUT the standalone evaluation unless it immediately specifies a concrete mechanism, consequence, comparison, decision, or boundary.',
+    maxHits: 4,
+    profiles: ['manuscript', 'unknown'],
+    languages: ['zh'],
+    evidence: { type: 'style-guide', source: 'Argument economy / content-free evaluation' },
+    findingKind: 'advisory',
+    defaultAction: 'CUT',
+  },
+
   {
     id: 'we-do-not-claim',
     category: 'claim_calibration',
@@ -4625,6 +4744,7 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
 
   // v0.8：统一补齐 findingKind——规则显式声明优先，否则按 severity/category 推导
   // （invariant 类已在命中创建时显式标注；规则级 findingKind 如 cn-self-defeating→violation 在这里传播）
+  // v2.0：同步补齐 action（最小补救动作）
   for (const h of hits) {
     if (!h.findingKind) {
       const rule = RULES.find((r) => r.id === h.ruleId)
@@ -4632,6 +4752,10 @@ export function auditText(text: string, opts?: AuditOptions): AuditReport {
         ?? (h.severity === 'high'
           ? (h.category === 'claim_calibration' ? 'candidate' : 'violation')
           : (h.category === 'claim_calibration' ? 'candidate' : 'advisory'))
+      if (!h.action) h.action = resolveEditAction(h, rule)
+    } else if (!h.action) {
+      const rule = RULES.find((r) => r.id === h.ruleId)
+      h.action = resolveEditAction(h, rule)
     }
   }
 

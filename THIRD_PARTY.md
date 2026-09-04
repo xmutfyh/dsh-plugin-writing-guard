@@ -50,7 +50,25 @@ dsh-plugin-writing-guard 本体为 MIT；以下借鉴均以"思想/机制适配"
 - **参考**：分层风格档案思想（discipline > journal > personal style 的优先级）——
   列入 v1.0 路线，当前未实现。
 
+## Kiterlin/anti-defensive-writing (MIT)
+
+- Source: <https://github.com/Kiterlin/anti-defensive-writing>
+- v2.0 design reference: distinguish reviewer-facing prebuttal, apology-like framing, and redundant hedging from legitimate methodological boundaries.
+- Adaptation: Writing Guard uses its own Argument Economy / control-context separation policy and retains Scholarship/Epistemic Lock as the higher-priority constraint. No source prompt is copied verbatim.
+
+## Worigin0314/academic-defensive-writing-auditor (MIT)
+
+- Source: <https://github.com/Worigin0314/academic-defensive-writing-auditor>
+- v2.0 design reference: defensive-writing taxonomy including reviewer-facing prebuttals, repeated disclaimers, result excuses, automatic summary sentences, and evidence-boundary over-signaling.
+- Adaptation: these categories informed new candidate rules and prompt-level editorial tests; implementation and wording are original.
+
+## matsuikentaro1/humanizer_academic (MIT)
+
+- Source: <https://github.com/matsuikentaro1/humanizer_academic>
+- v2.0 design reference: paraphrastic repetition and content-free evaluation as separate failure modes, including the distinction between empty restatement and genuine quantitative/technical clarification.
+- Adaptation: Writing Guard implements local candidate cues plus the host-model information-gain test; implementation and wording are original.
+
+
 ---
 
-*本插件所有规则均为本地确定性正则/统计，零网络零 LLM；任何检测结果都是"概率信号/候选"，不是对
-科研事实正确性的判定。*
+*Writing Guard v2.0 uses prompt-guided semantic editing plus deterministic integrity checks. Local regex/statistical hits are cues/candidates, not verdicts on scientific truth.*

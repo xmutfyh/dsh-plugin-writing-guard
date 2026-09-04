@@ -5,7 +5,7 @@
  * 运行：node tests/run-tests.mjs
  */
 import { auditText, detectDocumentProfile, filterReport, hitFingerprint, diffAudit, serializeFingerprints, deserializeFingerprints, diffScholarship, computeStyleProfile, computeJournalProfile, computeJournalProfileFromDocuments, auditJournalFit, detectRhetoricalMoves, splitSentences, cosineSimilarity, tokenizeForSimilarity, extractEpistemicMarkers, diffEpistemic, alignSentences, formatReport, extractClaimSpans, simTier, analyzeParagraphRhythm, analyzeSentenceRhythm, scaffoldSignature, findRepeatedScaffolds, findPunctuationOverloads, findCoinedFrameworks, findGenericClaims, parseBibText, checkCitationIntegrity } from '../lib/rules.js'
-import { isPaperFile, baselineByteSize, pruneBaselines } from '../lib/index.js'
+import { isPaperFile, baselineByteSize, pruneBaselines, buildAutoAuditControl } from '../lib/index.js'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -1666,7 +1666,7 @@ console.log('=== 89. v1.4 Journal Profile 蒸馏（computeJournalProfile）===')
     'Our findings suggest that temperature is a key control. The observed increase may be related to enhanced vapor transport. Further studies should examine pore-scale salt precipitation.',
   ].join('\n')
   const profile = computeJournalProfile(corpus, { journal: 'Test Journal', articleType: 'research-article' })
-  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '1.7.0' && profile.structure.sections.length >= 4)
+  check('journal profile metadata', profile.metadata.journal === 'Test Journal' && profile.metadata.profileVersion === '2.0.0' && profile.structure.sections.length >= 4)
   check('journal profile has sentence distribution', !!profile.sentenceStyle.sentenceLength && profile.sentenceStyle.sentenceLength.count > 0)
   check('journal profile has section details', profile.structure.sections.some((s) => s.name === 'results' && s.sentenceLength.count > 0))
   check('journal profile preserves only statistics', !JSON.stringify(profile).includes('This study investigates'))
@@ -2455,6 +2455,58 @@ console.log('=== 96. Delivery Integrity: CAL 检测 ===')
       byKindSum === report.summary.total,
       `sum=${byKindSum} total=${report.summary.total}`)
   }
+}
+
+
+// ============================================================================
+// 100. v2.0 prompt-first argument economy and control-plane separation
+// ============================================================================
+console.log('=== 100. v2.0 Argument Economy / Control Plane ===')
+{
+  const en = auditText(
+    'To prevent data leakage, normalization was carefully performed using only the training data. This means that leakage was avoided. This is an important finding.',
+    { profile: 'manuscript' },
+  )
+  check('v2 defensive-purpose-en detected', en.hits.some(h => h.ruleId === 'defensive-purpose-en'))
+  check('v2 defensive action reframes to fact', en.hits.some(h => h.ruleId === 'defensive-purpose-en' && h.action === 'REFRAME_TO_FACT'))
+  check('v2 semantic closure marker detected', en.hits.some(h => h.ruleId === 'semantic-closure-marker-en'))
+  check('v2 content-free evaluation cuts', en.hits.some(h => h.ruleId === 'content-free-evaluation-en' && h.action === 'CUT'))
+
+  const clean = auditText(
+    'Normalization parameters were estimated from the training data. The hazard ratio was 0.65, corresponding to a 35% lower hazard relative to controls.',
+    { profile: 'manuscript' },
+  )
+  check('v2 direct method fact is not defensive prose', !clean.hits.some(h => h.ruleId === 'defensive-purpose-en'))
+  check('v2 useful quantitative interpretation is not semantic-marker hit', !clean.hits.some(h => h.ruleId === 'semantic-closure-marker-en'))
+
+  const zhText = '\u4e3a\u9632\u6b62\u6570\u636e\u6cc4\u6f0f\uff0c\u6211\u4eec\u4ec5\u5728\u8bad\u7ec3\u96c6\u4e0a\u4f30\u8ba1\u5f52\u4e00\u5316\u53c2\u6570\u3002\u4e5f\u5c31\u662f\u8bf4\uff0c\u8fd9\u6837\u5c31\u907f\u514d\u4e86\u6cc4\u6f0f\u3002\u8be5\u7ed3\u679c\u5177\u6709\u91cd\u8981\u610f\u4e49\u3002'
+  const zh = auditText(zhText, { profile: 'manuscript' })
+  check('v2 defensive-purpose-zh detected', zh.hits.some(h => h.ruleId === 'defensive-purpose-zh'))
+  check('v2 semantic-closure-marker-zh detected', zh.hits.some(h => h.ruleId === 'semantic-closure-marker-zh'))
+  check('v2 content-free-evaluation-zh cuts', zh.hits.some(h => h.ruleId === 'content-free-evaluation-zh' && h.action === 'CUT'))
+
+  const fakeDiff = {
+    added: [{
+      ruleId: 'defensive-purpose-en',
+      category: 'claim_calibration',
+      severity: 'high',
+      confidence: 'high',
+      label: 'Defensive-purpose sentence',
+      snippet: 'To prevent data leakage, ...',
+      suggestion: 'WRITE A NEW SENTENCE ABOUT DATA LEAKAGE',
+      findingKind: 'candidate',
+      action: 'REFRAME_TO_FACT',
+      paragraphIndex: 0,
+    }],
+    resolved: [],
+    remaining: 1,
+    currentFingerprints: [],
+  }
+  const control = buildAutoAuditControl('paper.md', fakeDiff)
+  check('v2 control block excludes remediation suggestion wording', !control.includes('WRITE A NEW SENTENCE ABOUT DATA LEAKAGE'))
+  check('v2 control block explicitly forbids prose transfer', control.includes('CONTROL METADATA ONLY') && control.includes('intentionally omit snippets'))
+  check('v2 control block does not re-amplify diagnostic vocabulary', !control.toLowerCase().includes('data leakage') && !control.includes('To prevent'))
+  check('v2 control block carries structured edit action', control.includes('action=REFRAME_TO_FACT'))
 }
 
 console.log('')

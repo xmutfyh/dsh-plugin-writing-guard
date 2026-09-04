@@ -4,6 +4,29 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-09-03
+
+### Changed - Prompt-first scientific prose discipline
+
+- Repositioned STYLE from "AI detector" toward **Argument Economy & Prose Discipline**.
+- Added prompt-level manuscript policy: **Critique is not content**, **Every sentence must earn its place**, **Prefer CUT over REWRITE**, **Do not close every semantic loop**, **clarity is not exhaustive explanation**, style-only revisions default to same length or shorter, and **CUT -> PRUNE -> RECAST -> SPLIT**.
+- Added explicit control-plane separation: reviewer comments, user editing instructions, guard findings, rejected alternatives, and remediation text are not manuscript evidence.
+- Auto-audit injection no longer feeds natural-language rewrite suggestions **or diagnostic snippets** back to the agent. It now emits rule/action metadata with a hard "not prose source" boundary, reducing control-vocabulary re-amplification.
+- Added `EditAction`: KEEP / CUT / TIGHTEN / REFRAME_TO_FACT / RELOCATE / QUERY.
+- Added deterministic candidate cues for defensive-purpose framing, semantic-closure markers, and content-free evaluation in English/Chinese.
+- Long-sentence and modifier-chain remediation now prunes before splitting, reducing AI-style explanatory expansion.
+- Generic-claim remediation now tries deletion first and forbids expansion merely to make an implication explicit.
+- Retained Scholarship/Epistemic Lock, Journal Engine, Delivery Guard, and Word/OOXML integrity as deterministic post-generation checks.
+- Fixed TypeScript compatibility for DSH agent lifecycle events exposed at runtime but absent from the installed event-key typings.
+- Synchronized package/plugin/skill version to 2.0.0.
+
+### Research basis
+
+- Nature Methods: every word should do useful work; readers bring intelligence and do not need incessant repetition.
+- ICMJE: discuss real limitations while avoiding detailed repetition and unsupported conclusions.
+- Recent open-source defensive-writing skills informed taxonomy design; see THIRD_PARTY.md.
+- Added `RESEARCH_BASIS.md` documenting the editorial principles and the boundary between useful explanation and over-explication.
+
 ## [1.8.2] - 2026-09-01
 
 ### Added — DOCUMENT 第五支柱：Word Document Integrity Guard

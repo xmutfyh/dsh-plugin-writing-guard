@@ -6,20 +6,20 @@
 
 ## Scientific Writing & Document Integrity Guard for AI-assisted research
 
-**Less AI. More Evidence. Better Journal Fit. Safer Documents.**
+**Less explanation. More argument. Preserve the science.**
 
-Writing Guard is a local, deterministic guardrail for AI-assisted scientific writing.
+Writing Guard combines prompt-guided scientific prose discipline with deterministic integrity checks for AI-assisted research.
 It protects your manuscript across five layers:
 
 | Guard | Protects against | Risk |
 |-------|------------------|------|
-| **STYLE** | AI writing fingerprints | 机械排比、过度连接词、模板腔 |
+| **STYLE** | Argument economy | 防御性写作、过度解释、语义重复、模板腔 |
 | **EVIDENCE** | Scientific drift | 数值、单位、引用、结论被改 |
 | **JOURNAL** | Journal mismatch | scope/style/convention 不匹配 |
 | **DELIVERY** | Context leakage | prompt、notes、workflow metadata 泄漏 |
 | **DOCUMENT** 🆕 | Document corruption | Word 格式、公式、表格、OOXML 被破坏 |
 
-**Local · Deterministic · Zero Network · Zero LLM · 380+ Tests**
+**Prompt-guided writing · Deterministic integrity core · 390 Tests**
 
 ```
 npm install dsh-plugin-writing-guard
@@ -30,7 +30,29 @@ npm install dsh-plugin-writing-guard
 
 ---
 
-## 🛡️ New in 1.8 — Word Document Guard
+## New in 2.0 — Argument Economy & Control-Plane Separation
+
+Writing Guard 2.0 moves semantic style decisions **before generation** and keeps deterministic code focused on integrity.
+
+- **Critique is not content** — reviewer/user/guard wording is control context, not manuscript evidence.
+- **Prefer CUT over REWRITE** — if a sentence only prevents criticism, reassures reviewers, advertises importance, or repeats an obvious implication, delete it.
+- **Do not close every semantic loop** — stop after evidence + necessary interpretation; keep non-obvious statistical interpretation and reproducibility detail.
+- **Style-only revisions default to same length or shorter** — no explanatory inflation without new supported content.
+- **Auto-audit no longer reinjects snippets or rewrite suggestions** — only structured rule/action metadata is sent back to the agent.
+- New English/Chinese cues for defensive-purpose framing, semantic-closure markers, and content-free evaluation.
+
+Example:
+
+```text
+Avoid:  To prevent data leakage, normalization was carefully performed using only the training data.
+Prefer: Normalization parameters were estimated from the training data.
+```
+
+The second sentence states the method fact without importing the defensive reason for mentioning it.
+
+---
+
+## 🛡️ Word Document Guard (introduced in 1.8)
 
 **Change what was requested. Verify what wasn't.**
 
@@ -109,9 +131,9 @@ Once installed, you can use natural language:
 
 ## Five Guards — Detailed
 
-### STYLE — AI Writing Detection
+### STYLE — Argument Economy & Prose Discipline
 
-Detects and reduces机械化、模板化、过度防御的 AI writing:
+Guides the host model before writing, then uses deterministic cues to audit mechanical, defensive, and over-explained prose:
 
 - Revision residue: `revised`, `as requested`, `本轮`, `审稿人要求`
 - Defensive writing: concession stacking, limitation pre-emption
@@ -235,7 +257,7 @@ The LLM/agent decides *what* should change. Deterministic Word code decides *how
 npm test
 ```
 
-380+ deterministic tests covering:
+390 deterministic tests covering:
 - STYLE, Scholarship Lock, Epistemic Lock
 - Claim alignment, local citation integrity
 - Journal Profile, Journal Fit
@@ -246,9 +268,9 @@ npm test
 
 ## Security & Privacy
 
-- All rules run **locally**: zero network, zero LLM
-- Plugin only reads files being edited
-- No content collection or upload
+- Deterministic integrity checks run locally; semantic writing decisions are handled by the host model under the Writing Guard policy.
+- The plugin only reads files being edited.
+- The plugin itself does not upload or collect manuscript content.
 - See [SECURITY.md](SECURITY.md)
 
 ---
@@ -262,7 +284,7 @@ npm test
 | Auto-monitor manuscript | ✅ | ❌ | ❌ |
 | Full rewrite | ❌ | ✅ | ❌ |
 | Explainable issues | ✅ | Partial | Partial |
-| Local rules (zero LLM) | ✅ | Usually no | Depends |
+| Deterministic integrity checks | ✅ | Usually no | Depends |
 
 > Humanizer rewrites after writing. Writing Guard prevents during writing.
 

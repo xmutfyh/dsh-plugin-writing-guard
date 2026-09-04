@@ -3,21 +3,40 @@
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xmutfyh/dsh-plugin-writing-guard/actions/workflows/ci.yml)
 
-**Less AI. More Evidence. Better Journal Fit. Clean Delivery.**
+**Less explanation. More argument. Preserve the science.**
 
 Writing Guard is a research-paper writing guard for DeepSeek Harness:
-it reduces mechanical, templated and defensive AI writing,
+it guides the host model toward economical, evidence-bound prose and audits mechanical, templated and defensive writing,
 protects research facts and scientific commitments during AI-assisted revision,
 calibrates a manuscript's writing distributions against representative target-journal papers,
 and detects context-to-artifact leakage in final deliverables.
 
 > **Language can change. Evidence cannot. Rejected alternatives should not leak.**
 
-**Local · Deterministic · Zero Network · Zero LLM**
+**Prompt-guided writing · Deterministic integrity core**
 
 ---
 
-## Four pillars: STYLE / EVIDENCE / JOURNAL / DELIVERY
+## New in 2.0 — Argument Economy & Control-Plane Separation
+
+Writing Guard 2.0 moves semantic style decisions before generation while keeping deterministic code focused on integrity.
+
+- **Critique is not content:** reviewer comments, user edit instructions and guard findings are control context, not manuscript evidence.
+- **Prefer CUT over REWRITE:** delete sentences that only pre-empt criticism, reassure reviewers, advertise importance or restate an obvious implication.
+- **Do not close every semantic loop:** stop after evidence plus the necessary interpretation; retain non-obvious statistics, reproducibility detail and genuine epistemic boundaries.
+- **Style-only revisions default to the same length or shorter:** no explanatory inflation without new supported content.
+- **Auto-audit no longer reinjects snippets or rewrite suggestions:** it returns structured rule/action metadata only.
+
+Example:
+
+```text
+Avoid:  To prevent data leakage, normalization was carefully performed using only the training data.
+Prefer: Normalization parameters were estimated from the training data.
+```
+
+---
+
+## Five guards: STYLE / EVIDENCE / JOURNAL / DELIVERY / DOCUMENT
 
 1. **Less AI / STYLE**
    Detect and reduce mechanical, templated, over-defensive AI writing — revision residue, defensive writing, hollow buzzwords and structural tells. We do not hide AI use; we remove bad AI writing.
@@ -32,6 +51,9 @@ and detects context-to-artifact leakage in final deliverables.
 4. **Clean Delivery / DELIVERY**
    Detects context-to-artifact leakage: rejected alternatives, revision history, or working-context residue that leaks into final deliverables without support from the authoritative baseline. CAL = Context-to-Artifact Leakage (an engineering term, not academic).
    > Language can change. Evidence cannot. Rejected alternatives should not leak.
+
+5. **Safe Document Editing / DOCUMENT**
+   Verify edit scope and preserve Word/OOXML structures, equations, tables and package integrity.
 
 ## Quick Start
 
@@ -56,7 +78,7 @@ Writing Guard is not a one-shot humanizer. It works continuously inside the DSH 
 - Check while writing / editing with `writing_audit`
 - Compare before/after revisions to protect Scholarship / Epistemic invariants
 
-## STYLE — removing AI flavor
+## STYLE — argument economy and prose discipline
 
 Detects:
 
@@ -172,15 +194,15 @@ Repository: https://github.com/xmutfyh/dsh-plugin-writing-guard
 | Auto-audits paper edits | ✅ | ❌ | ❌ |
 | Full-text rewrite | ❌ | ✅ | ❌ |
 | Explainable issue location | ✅ | partial | partial |
-| Local rules (zero network / zero LLM) | ✅ | usually needs LLM | varies |
+| Deterministic integrity checks | ✅ | usually no | varies |
 
 > A humanizer fixes the text after it is written; Writing Guard guards it as you write.
 
 ## Security & Privacy
 
-- All rules run **locally**: zero network, zero LLM, zero subprocesses
-- The plugin only reads the paper files the agent is currently writing/editing and writes its incremental state under `~/.dsh/plugins/dsh-plugin-writing-guard/`
-- It does not collect or upload paper content
+- Deterministic integrity checks run locally; semantic writing decisions are handled by the host model under the Writing Guard policy.
+- The plugin only reads the paper files the agent is currently writing/editing and writes its incremental state under `~/.dsh/plugins/dsh-plugin-writing-guard/`.
+- The plugin itself does not collect or upload paper content.
 - See [SECURITY.md](SECURITY.md)
 
 ## Tests
@@ -189,7 +211,7 @@ Repository: https://github.com/xmutfyh/dsh-plugin-writing-guard
 npm test
 ```
 
-380+ deterministic TP / TN / boundary / regression tests covering:
+390 deterministic TP / TN / boundary / regression tests covering:
 
 - STYLE, Scholarship Lock, Epistemic Lock
 - Claim alignment, local citation integrity

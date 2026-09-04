@@ -90,6 +90,46 @@ const DEFAULT_CONFIG: Config = {
 /** 默认项目内部词表（通用痕迹，不含 priority/SHA-256 等普通学术词） */
 const DEFAULT_PROJECT_TERMS = ['source_map', 'reader 锚点', 'iteration_log', 'final_audit', 'blueprint', 'full_corpus']
 
+// v2.0: DSH runtime exposes agent lifecycle events even when the installed type package omits them.
+type AgentLifecyclePayload = { agent: { id: string }; turn: number }
+function onAgentLifecycle(
+  ctx: Context,
+  event: 'agent/disposed' | 'agent/turn-stopping',
+  handler: (payload: AgentLifecyclePayload) => void,
+): void {
+  const on = ctx.on as unknown as (eventName: string, cb: (payload: AgentLifecyclePayload) => void) => void
+  on.call(ctx, event, handler)
+}
+
+/**
+ * v2.0 control-plane notification. Findings guide editing but are never prose sources.
+ * Suggestions are intentionally excluded to prevent remediation wording from leaking into the manuscript.
+ */
+export function buildAutoAuditControl(target: string, diff: AuditDiff): string {
+  const lines: string[] = [
+    `<writing_guard_control version="${PLUGIN_VERSION}" target=${JSON.stringify(target)}>`,
+    'CONTROL METADATA ONLY. Do not quote, paraphrase, or transfer wording from this block into the manuscript.',
+    'Findings intentionally omit snippets and rewrite suggestions so control vocabulary is not re-amplified into prose.',
+    'The manuscript and authoritative research sources are the only sources of scientific prose.',
+    `added=${diff.added.length}; resolved=${diff.resolved.length}; remaining=${diff.remaining}`,
+    '',
+  ]
+  for (const h of diff.added) {
+    lines.push(
+      `finding rule=${h.ruleId}; severity=${h.severity}; kind=${h.findingKind ?? 'advisory'}; action=${h.action ?? 'KEEP'}; paragraph=${h.paragraphIndex}`,
+    )
+  }
+  lines.push(
+    '',
+    'Apply the minimum necessary edit. Prefer CUT over generating replacement prose.',
+    'REFRAME_TO_FACT means remove the defensive/reviewer-facing motive and retain only a fact independently supported by the manuscript or source material.',
+    'If an edit requires a scientific fact that is not in the authoritative material, QUERY rather than inventing it.',
+    'Do not add a sentence merely to explain why a concern has been addressed or why the authors should not be criticized.',
+    '</writing_guard_control>',
+  )
+  return lines.join('\n')
+}
+
 // ---------- v0.5 incremental lint 状态持久化 ----------
 
 /** 指纹算法版本：指纹规则变化时递增，旧 state 清空重建（防止升级后制造假 resolved+added） */
@@ -589,8 +629,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.tools.register(defineTool({
     name: 'writing_rules',
     description:
-      '返回论文写作纪律速查清单（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：修改过程残留、主张校准、修辞模式、LLM 关联词、' +
-      '学术文体与格式、发布会原则与自查项（含文档类型 profile 与密度规则说明）。' +
+      '返回论文写作纪律速查清单（dsh-plugin-writing-guard v' + PLUGIN_VERSION + '）：control-context 隔离、论证经济性、过度解释、主张校准、科研完整性与确定性自查。' +
       '写作/修改任何论文段落前可先调用本工具加载纪律，写完后用 writing_audit 复查。' +
       '插件也会在论文文件被写入后自动审计（autoAuditOnWrite）。',
     parameters: {},
@@ -890,12 +929,12 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     // 改用 agent/turn-stopping（DSH 官方轮次边界事件）在每轮结束时清零计数。
     const injectCounts = new Map<string, number>()
 
-    ctx.on('agent/disposed', ({ agent }) => {
+    onAgentLifecycle(ctx, 'agent/disposed', ({ agent }) => {
       injectCounts.delete(agent.id)
     })
 
     // 轮次边界：turn 即将关闭时清零，下一轮重新计数（达到上限只影响 notification，不影响 tracking）
-    ctx.on('agent/turn-stopping', ({ agent }) => {
+    onAgentLifecycle(ctx, 'agent/turn-stopping', ({ agent }) => {
       injectCounts.delete(agent.id)
     })
 
@@ -1003,21 +1042,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         if (currentCount >= cfg.maxAutoInjectPerTurn) return decision
         injectCounts.set(agent.id, currentCount + 1)
 
-        // 新增问题：只展示新增项 + 增量摘要（"新增 1 / 解决 4 / 仍存在 8"）
-        const lines: string[] = [
-          `【dsh-plugin-writing-guard 自动审计】"${target}"：新增 ${diff.added.length} 项 / 已解决 ${diff.resolved.length} 项 / 仍存在 ${diff.remaining} 项`,
-          '',
-        ]
-        for (const h of diff.added) {
-          const sev = h.severity === 'high' ? '🔴' : h.severity === 'medium' ? '🟠' : '🟡'
-          // v0.8：带性质标签（INVARIANT=科学不变量被改动，最高优先）
-          lines.push(`${sev} [${h.severity.toUpperCase()} · conf ${h.confidence} · ${(h.findingKind ?? 'advisory').toUpperCase()}] ${h.label}`)
-          lines.push(`    原文：${h.snippet.trim().slice(0, 200)}`)
-          lines.push(`    建议：${h.suggestion}`)
-          lines.push('')
-        }
-        lines.push('请按上述建议在下一轮修正新增项（INVARIANT/VIOLATION 优先；CANDIDATE 先人工判定是否删除）；已解决项无需处理。')
-        const text = lines.join('\n')
+        // v2.0: inject control metadata, not natural-language rewrite suggestions.
+        // This prevents guard/reviewer wording from becoming manuscript content.
+        const text = buildAutoAuditControl(target, diff)
 
         const notice = createUserMessage({
           content: [{ type: 'text', text }],
@@ -1043,11 +1070,11 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     const briefCounts = new Map<string, { turn: number }>()
     const BRIEF_EVERY_TURNS = 5
 
-    ctx.on('agent/disposed', ({ agent }) => {
+    onAgentLifecycle(ctx, 'agent/disposed', ({ agent }) => {
       briefCounts.delete(agent.id)
     })
 
-    ctx.on('agent/turn-stopping', async ({ agent, turn }) => {
+    onAgentLifecycle(ctx, 'agent/turn-stopping', async ({ agent, turn }) => {
       try {
         const cwd = (agent as { session?: { header?: { cwd?: string } } }).session?.header?.cwd
         // 只在论文工作区注入（知识库布局或路径含论文特征；与 isPaperFile 同词表）

@@ -18,31 +18,20 @@
 - 最终回复会写到 `.codex-last-message.md`。
 - 建议先 `git diff` 审查 Codex 的改动，再提交。
 
-## 当前仓库状态（截至 v1.6.1）
+## 当前仓库状态（v2.0.0）
 
-- 已实现：
-  - Journal Profile 蒸馏、`writing_journal_profile`、`writing_audit(journalProfile=...)`
-  - Journal Fit section-level 报告、中文 Claim Anchor CJK bigram
-  - **v1.4.1 Corpus-aware Journal Distillation**：`computeJournalProfileFromDocuments`、
-    逐篇解析、canonical section 聚合、所有指标 Distribution、引用密度入 Fit、
-    被动语态不规则过去分词增强
-  - **v1.4.2 Journal Fit hardening**：CI-safe 真实语料测试、ratio 评分修复、
-    文献/图表引用拆分、Journal Fit Confidence、canonical aliases 扩充
-  - **v1.5.0 Epistemic Journal Fingerprint**：复用 `extractClaimSpans`，
-    `claimCount` / `highCausalRatio` / `hedgedClaimRatio` / `strongEvidentialRatio` /
-    `scopeQualifiedRatio` / `nullFindingRatio` 进入 Journal Profile 与 Journal Fit
-  - **v1.6.0 Rhetorical Moves**：`detectRhetoricalMoves` + `sectionMoves` + `transitions` +
-    Journal Fit `rhetorical move coverage` / `rhetorical order fit`
-  - **v1.6.1 Semantic Hardening**：`claimDensity` 进入 Fit、`ClaimSpan.spanKind`、
-    移除旧 regex epistemic 重复计权、`results_discussion` 独立 canonical section
-- 测试：`npm test` = 308 通过 / 0 失败（本地 ESR/source.md smoke test；CI 无语料时自动 SKIP）。
-- 下一步候选（来自 `C:\Users\fyh\Desktop\分析.md`）：
-  1. Journal Fingerprint 可视化
-  2. 自动 PDF 蒸馏（Profile Builder）
-  3. 社区 Journal Profile 仓库
-  4. LaTeX Project-aware Audit（跨文件 `\input` / `\include` / `.bib` 图）
+- 写作架构：Prompt-first Argument Economy + deterministic integrity checks。
+- 核心文风约束：Critique is not content；Prefer CUT over REWRITE；Do not close every semantic loop；style-only revision 默认不扩写。
+- auto-audit 使用结构化 control metadata，不再把 finding suggestion / snippet 作为正文素材回灌。
+- 新增 defensive-purpose、semantic-closure、content-free-evaluation 中英文规则与 EditAction。
+- Scholarship Lock / Epistemic Lock / Journal Engine / DELIVERY / Word Guard 保持为高优先级确定性保护。
+- 测试：npm test = 390 通过 / 0 失败（真实语料 smoke test 在本地语料缺失时自动 SKIP）。
+- 下一步候选：
+  1. 更系统的 semantic over-explanation benchmark
+  2. style-only expansion / contraction 统计与 corpus evaluation
+  3. Journal Fingerprint 可视化
+  4. LaTeX Project-aware Audit（跨文件 \input / \include / .bib 图）
   5. WritingGuardBench 公开 benchmark
-  6. WritingGuardBench 公开 benchmark
 
 ## 安全注意
 
