@@ -4,6 +4,32 @@ All notable changes to dsh-plugin-writing-guard are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-10-05
+
+### Changed — Word Guard 同步至 word-guard v1.1.0
+
+**核心理念不变：Change what was requested. Verify what wasn't.**
+
+- Vendor `src/word_guard/` 同步到最新 word-guard（v1.1.0）。插件工具签名未变，`writing_word_edit` 与 `writing_word_format_tables` 自动获得下列新行为：
+  - `cli.py`：新增 `format-equations` / `format-paragraphs` / `format-defaults` 命令；`edit` 在完成 run-aware 替换后自动套用表格 / 公式 / 正文段落默认格式。
+  - `table_format.py`：三线表前先清除旧表格样式（table style 引用、style look、边框、底纹），套用后单元格水平 + 垂直居中；未知非版式表格默认纳入格式化（`include_unknown` 默认由 `False` 改为 `True`）。
+  - `equation_audit.py`：新增章节式编号 `(4-1)`、`(4-14a)` 的识别与连续性判定（章内序号连续、章号递增、同号后缀互异），与连续式 `(1) (2) (3)` 并存；编号解析改为正则常量并新增 `_number_key` / `_numbering_style` / `_check_continuity`。
+
+### Added — 两个可独立调用的格式化模块
+
+- `equation_format.py`：原生 OMML 公式居中，带编号时用 center/right 制表位把编号排到右边距，不改动公式本体。
+- `paragraph_format.py`：疑似正文段落默认两端对齐，跳过标题、图表题注、公式、参考文献与表单标签。
+
+### Changed — 版本号统一
+
+- `package.json`、`PLUGIN_VERSION`（`src/rules.ts` 与编译产物 `lib/rules.js`）、`skills/writing-guard/manifest.yaml`、测试断言统一为 2.0.2。
+- 说明：`lib/` 为提交入库的编译产物，本次仅同步 `PLUGIN_VERSION` 一个常量；其余文件与源码一致，完整重建（`pnpm build`）结果不变。
+- All 394 tests passing (`pnpm install --frozen-lockfile && pnpm build && pnpm test`)。
+
+### Not included
+
+- `format-equations` / `format-paragraphs` / `format-defaults` 暂未注册为独立插件工具（需改 `src/index.ts` 并重建 `lib/`）；目前通过 `writing_word_edit` 的默认格式行为或直接调用 Python CLI 使用。
+
 ## [2.0.1] - 2026-09-04
 
 ### Changed — v2.0 cleanup

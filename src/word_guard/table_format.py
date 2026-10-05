@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Baseline-aware three-line table formatter for scholarly DOCX documents.
+"""Academic three-line table formatter for scholarly DOCX documents.
 
-Safety principles:
-1. Classify tables before formatting.  Layout/figure-container tables are never
+Default presentation contract:
+1. Classify tables before formatting. Layout/figure-container tables are never
    converted automatically.
-2. Prefer the baseline manuscript's border weights when available.
-3. Put top/header/bottom rules on row cells rather than table-level bottom
-   borders, avoiding false bottom rules at page breaks in long tables.
-4. Do not silently bold headers or otherwise restyle text.
+2. Clear the table's previous visual style first so style-based borders/shading
+   cannot override the requested three-line appearance.
+3. Apply exactly three horizontal rules: table top, header bottom, table bottom.
+4. Center cell content horizontally and vertically.
+5. Prefer a baseline manuscript's border weights when available.
+6. Do not silently change fonts, bolding, widths, merges, or cell text.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
@@ -130,23 +134,69 @@ def _set_cell_border(cell, edge: str, sz: str, color='000000', val='single'):
     tcBorders.append(el)
 
 
-def _clear_cell_borders(cell):
-    tcPr = cell._tc.get_or_add_tcPr()
-    for old in tcPr.findall(qn('w:tcBorders')):
-        tcPr.remove(old)
+def _remove_all(parent, tag: str):
+    for old in list(parent.findall(qn(tag))):
+        parent.remove(old)
+
+
+def clear_original_table_style(table):
+    """Clear visual table styling before applying the academic table format.
+
+    This intentionally removes style-driven and direct borders/shading while
+    preserving widths, merges, cell margins, row heights, text, and run fonts.
+    """
+    tblPr = table._tbl.tblPr
+    for tag in ('w:tblStyle', 'w:tblLook', 'w:tblBorders', 'w:shd'):
+        _remove_all(tblPr, tag)
+
+    seen_cells = set()
+    for row in table.rows:
+        for cell in row.cells:
+            # Merged cells can appear more than once through python-docx.
+            tc_key = cell._tc
+            if tc_key in seen_cells:
+                continue
+            seen_cells.add(tc_key)
+            tcPr = cell._tc.get_or_add_tcPr()
+            _remove_all(tcPr, 'w:tcBorders')
+            _remove_all(tcPr, 'w:shd')
+
+
+def _center_cell_content(table):
+    """Center table cell content horizontally and vertically."""
+    seen_cells = set()
+    for row in table.rows:
+        for cell in row.cells:
+            tc_key = cell._tc
+            if tc_key in seen_cells:
+                continue
+            seen_cells.add(tc_key)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
 def make_three_line_table(table, spec: ThreeLineSpec | None = None):
+    """Clear the existing table style, then apply the default three-line table."""
     spec = spec or ThreeLineSpec()
     if not table.rows:
-        return {'rows': 0, 'cols': 0, 'spec': spec.to_dict()}
+        return {
+            'rows': 0,
+            'cols': 0,
+            'spec': spec.to_dict(),
+            'original_style_cleared': False,
+            'content_alignment': 'center-center',
+        }
 
-    # Remove table-level rules entirely. Cell-level rules survive pagination more reliably.
+    # Important: first remove the original style/direct border presentation.
+    # Some Word table styles otherwise re-introduce grid lines after save/open.
+    clear_original_table_style(table)
+
+    # Explicitly disable every table-level border. Cell-level rules below define
+    # the only visible lines and survive pagination more reliably.
     tblPr = table._tbl.tblPr
-    for old_b in tblPr.findall(qn('w:tblBorders')):
-        tblPr.remove(old_b)
     borders = OxmlElement('w:tblBorders')
-    for edge_name in ('top','left','bottom','right','insideH','insideV'):
+    for edge_name in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
         el = OxmlElement(f'w:{edge_name}')
         el.set(qn('w:val'), 'none')
         el.set(qn('w:sz'), '0')
@@ -155,26 +205,27 @@ def make_three_line_table(table, spec: ThreeLineSpec | None = None):
         borders.append(el)
     tblPr.append(borders)
 
-    # Clear existing cell borders first, then define exactly three horizontal rules.
-    for row in table.rows:
-        for cell in row.cells:
-            _clear_cell_borders(cell)
-
+    # Define exactly three horizontal rules.
     for cell in table.rows[0].cells:
         _set_cell_border(cell, 'top', spec.top_sz, spec.color)
         _set_cell_border(cell, 'bottom', spec.header_sz, spec.color)
     for cell in table.rows[-1].cells:
         _set_cell_border(cell, 'bottom', spec.bottom_sz, spec.color)
 
+    # Default academic layout: all cell content is centered in both axes.
+    _center_cell_content(table)
+
     return {
         'rows': len(table.rows),
         'cols': len(table.columns),
         'spec': spec.to_dict(),
+        'original_style_cleared': True,
+        'content_alignment': 'center-center',
     }
 
 
 def convert_tables_to_three_line(doc, baseline_path: str | None = None, include_unknown: bool = False):
-    """Format only tables classified as data tables; skip layout tables by default."""
+    """Format data tables as centered three-line tables; skip layout tables."""
     results = []
     for i, table in enumerate(doc.tables):
         preceding = _preceding_paragraph_text(table)
@@ -189,6 +240,6 @@ def convert_tables_to_three_line(doc, baseline_path: str | None = None, include_
     return results
 
 
-# Backward-compatible alias. Safety behavior is intentionally changed: layout/unknown tables are skipped.
+# Backward-compatible alias. Layout/unknown tables remain skipped by default.
 def convert_all_tables_to_three_line(doc):
     return convert_tables_to_three_line(doc)

@@ -33,6 +33,44 @@ from word_guard.integrity import check_scope_integrity
 from word_guard.package_guard import validate_docx_package, compare_package_parts
 from word_guard.fingerprint import build_baseline_fingerprint
 from word_guard.equation_audit import audit_equations
+from word_guard.table_format import convert_tables_to_three_line
+from word_guard.equation_format import format_equations
+from word_guard.paragraph_format import justify_body_paragraphs
+
+
+def _apply_default_academic_formatting(doc, include_unknown_tables=True):
+    """Apply Word Guard's default academic table and equation presentation.
+
+    Defaults:
+    - non-layout tables -> clear old table style, apply three-line borders,
+      center cell content horizontally and vertically;
+    - OMML equations -> center equation body and right-align a trailing equation
+      number on the same line;
+    - likely running body-text paragraphs -> justified alignment, while preserving
+      headings, captions, equations, and explicit center/right alignment.
+    """
+    table_results = convert_tables_to_three_line(
+        doc, baseline_path=None, include_unknown=include_unknown_tables
+    )
+    paragraph_results = justify_body_paragraphs(doc)
+    equation_results = format_equations(doc)
+    return {
+        'tables': {
+            'formatted': sum(1 for r in table_results if r.get('action') == 'formatted'),
+            'skipped': sum(1 for r in table_results if r.get('action') == 'skipped'),
+            'details': table_results,
+        },
+        'body_paragraphs': {
+            'justified': sum(1 for r in paragraph_results if r.get('action') == 'justified'),
+            'skipped': sum(1 for r in paragraph_results if r.get('action') == 'skipped'),
+            'details': paragraph_results,
+        },
+        'equations': {
+            'formatted_numbered': sum(1 for r in equation_results if r.get('action') == 'formatted_numbered'),
+            'centered_unnumbered': sum(1 for r in equation_results if r.get('action') == 'centered_unnumbered'),
+            'details': equation_results,
+        },
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -232,6 +270,10 @@ def writing_word_edit(file_path, replacements, scope_config=None,
                 f"{', '.join(p['protected_nodes'])}"
             )
 
+    # Apply the user's default academic presentation before saving.
+    # This is intentionally deterministic formatting, not content analysis.
+    default_formatting = _apply_default_academic_formatting(doc, include_unknown_tables=True)
+
     # Save
     save_path = output_path or file_path
     doc.save(save_path)
@@ -258,6 +300,7 @@ def writing_word_edit(file_path, replacements, scope_config=None,
             'heading': scope.start_heading,
         },
         'protected_elements': len(protected),
+        'default_formatting': default_formatting,
         'package_validation': package_validation,
         'package_integrity': package_integrity,
         'manifest_summary': manifest.summary(),
@@ -436,7 +479,7 @@ def writing_word_scope_check(file_before, file_after, scope_config=None):
 # Tool 5: writing_word_format_tables
 # ═══════════════════════════════════════════════════════════════════════════
 
-def writing_word_format_tables(file_path, output_path=None, baseline_path=None, include_unknown=False):
+def writing_word_format_tables(file_path, output_path=None, baseline_path=None, include_unknown=True):
     """Safely convert scholarly data tables to three-line format.
 
     Layout/figure-container tables are skipped.  If a baseline manuscript is
@@ -448,7 +491,6 @@ def writing_word_format_tables(file_path, output_path=None, baseline_path=None, 
         return {'error': f"Baseline file not found: {baseline_path}"}
 
     from docx import Document
-    from word_guard.table_format import convert_tables_to_three_line
 
     doc = Document(file_path)
     results = convert_tables_to_three_line(doc, baseline_path, include_unknown=include_unknown)
@@ -464,6 +506,69 @@ def writing_word_format_tables(file_path, output_path=None, baseline_path=None, 
         'baseline': baseline_path,
         'package_validation': validation,
         'details': results,
+    }
+
+
+def writing_word_format_equations(file_path, output_path=None):
+    """Apply the default equation layout without changing equation content."""
+    if not os.path.exists(file_path):
+        return {'error': f"File not found: {file_path}"}
+
+    from docx import Document
+    doc = Document(file_path)
+    results = format_equations(doc)
+    save_path = output_path or file_path
+    doc.save(save_path)
+    validation = validate_docx_package(save_path).to_dict()
+
+    return {
+        'success': validation['valid'],
+        'output': save_path,
+        'equations_formatted_numbered': sum(1 for r in results if r.get('action') == 'formatted_numbered'),
+        'equations_centered_unnumbered': sum(1 for r in results if r.get('action') == 'centered_unnumbered'),
+        'package_validation': validation,
+        'details': results,
+    }
+
+
+def writing_word_format_paragraphs(file_path, output_path=None):
+    """Apply justified alignment to likely body-text paragraphs only."""
+    if not os.path.exists(file_path):
+        return {'error': f"File not found: {file_path}"}
+
+    from docx import Document
+    doc = Document(file_path)
+    results = justify_body_paragraphs(doc)
+    save_path = output_path or file_path
+    doc.save(save_path)
+    validation = validate_docx_package(save_path).to_dict()
+
+    return {
+        'success': validation['valid'],
+        'output': save_path,
+        'paragraphs_justified': sum(1 for r in results if r.get('action') == 'justified'),
+        'paragraphs_skipped': sum(1 for r in results if r.get('action') == 'skipped'),
+        'package_validation': validation,
+        'details': results,
+    }
+
+
+def writing_word_format_defaults(file_path, output_path=None):
+    """Apply default table, equation, and body-paragraph formatting rules."""
+    if not os.path.exists(file_path):
+        return {'error': f"File not found: {file_path}"}
+
+    from docx import Document
+    doc = Document(file_path)
+    formatting = _apply_default_academic_formatting(doc, include_unknown_tables=True)
+    save_path = output_path or file_path
+    doc.save(save_path)
+    validation = validate_docx_package(save_path).to_dict()
+    return {
+        'success': validation['valid'],
+        'output': save_path,
+        'default_formatting': formatting,
+        'package_validation': validation,
     }
 
 
@@ -501,7 +606,10 @@ def main():
         print("  audit <file.docx>                         - Writing audit")
         print("  edit <file.docx> <replacements.json>      - Edit document")
         print("  scope-check <before.docx> <after.docx>    - Check scope integrity")
-        print("  format-tables <file.docx> [output.docx] [baseline.docx] - Safe three-line tables")
+        print("  format-tables <file.docx> [output.docx] [baseline.docx] - Three-line tables + centered cells")
+        print("  format-equations <file.docx> [output.docx] - Equation centered + number at right margin")
+        print("  format-paragraphs <file.docx> [output.docx] - Justify likely body-text paragraphs")
+        print("  format-defaults <file.docx> [output.docx]  - Apply table + equation + paragraph defaults")
         print("  package-validate <file.docx>              - Validate OOXML package")
         print("  fingerprint <file.docx>                   - Baseline formatting fingerprint")
         print("  equation-audit <file.docx> [baseline.docx]- Audit native equations")
@@ -564,6 +672,33 @@ def main():
         output_file = sys.argv[3] if len(sys.argv) > 3 else input_file
         baseline_file = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] not in ('null','') else None
         result = writing_word_format_tables(input_file, output_file, baseline_file)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif command == 'format-equations':
+        if len(sys.argv) < 3:
+            print("Usage: format-equations <file.docx> [output.docx]")
+            sys.exit(1)
+        input_file = sys.argv[2]
+        output_file = sys.argv[3] if len(sys.argv) > 3 else input_file
+        result = writing_word_format_equations(input_file, output_file)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif command == 'format-paragraphs':
+        if len(sys.argv) < 3:
+            print("Usage: format-paragraphs <file.docx> [output.docx]")
+            sys.exit(1)
+        input_file = sys.argv[2]
+        output_file = sys.argv[3] if len(sys.argv) > 3 else input_file
+        result = writing_word_format_paragraphs(input_file, output_file)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif command == 'format-defaults':
+        if len(sys.argv) < 3:
+            print("Usage: format-defaults <file.docx> [output.docx]")
+            sys.exit(1)
+        input_file = sys.argv[2]
+        output_file = sys.argv[3] if len(sys.argv) > 3 else input_file
+        result = writing_word_format_defaults(input_file, output_file)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
     elif command == 'package-validate':
