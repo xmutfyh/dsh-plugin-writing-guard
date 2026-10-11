@@ -32,6 +32,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
+// 0.2.x 的 V4 会话格式要求消息源 kind 非空且不等于 'plugin'；第三方插件按规范以
+// plugin:<插件名> 归属（见 @deepseek-ai/dsh-session-format-v3-to-v4 的转换规范）。
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'plugin:dsh-plugin-writing-guard': { kind: 'plugin:dsh-plugin-writing-guard' }
+  }
+}
 export const name = 'dsh-plugin-writing-guard'
 
 export const inject = ['tools']
@@ -1030,7 +1037,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
           if (diff.remaining === 0) {
             const notice = createUserMessage({
               content: [{ type: 'text', text: `【dsh-plugin-writing-guard】"${target}" 写作纪律问题已全部清零 ✅` }],
-              source: { kind: 'plugin', plugin: name },
+              source: { kind: 'plugin:dsh-plugin-writing-guard' },
             })
             return { ...decision, additionalContexts: [...(decision.additionalContexts ?? []), notice] }
           }
@@ -1048,7 +1055,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
 
         const notice = createUserMessage({
           content: [{ type: 'text', text }],
-          source: { kind: 'plugin', plugin: name },
+          source: { kind: 'plugin:dsh-plugin-writing-guard' },
         })
 
         // 把自动审计结果作为下一条请求的附加上下文（不阻塞本次调用）
@@ -1084,7 +1091,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         briefCounts.set(agent.id, { turn })
         ;(agent as { inject?: (msg: unknown) => void }).inject?.(createUserMessage({
           content: [{ type: 'text', text: rulesBrief() }],
-          source: { kind: 'plugin', plugin: name },
+          source: { kind: 'plugin:dsh-plugin-writing-guard' },
         }))
       } catch (error) {
         ctx.logger.warn(`dsh-plugin-writing-guard: autoBrief failed: ${error instanceof Error ? error.message : String(error)}`)
